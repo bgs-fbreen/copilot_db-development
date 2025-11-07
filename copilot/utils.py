@@ -59,3 +59,41 @@ def get_project_directory_name(project_code, project_name, max_name_length=30):
     else:
         return project_code
 
+
+def get_project_directory(client_code, project_code, project_name=None):
+    """
+    Get the full path to a project directory
+    
+    Returns the path if it exists, None otherwise
+    """
+    import os
+    from copilot.db import execute_query
+    
+    PROJECT_BASE = "/mnt/sda1/01_bgm_projman/Active"
+    PROJECT_FALLBACK = os.path.expanduser("~/bgm_projects/Active")
+    
+    base_dir = PROJECT_BASE if os.path.exists(PROJECT_BASE) else PROJECT_FALLBACK
+    
+    # If we don't have project_name, fetch it
+    if not project_name:
+        result = execute_query("""
+            SELECT project_name 
+            FROM bgs.project 
+            WHERE project_code = %s
+        """, (project_code,))
+        if result:
+            project_name = result[0]['project_name']
+    
+    # Generate directory name
+    dir_name = get_project_directory_name(project_code, project_name)
+    project_path = os.path.join(base_dir, client_code, dir_name)
+    
+    if os.path.exists(project_path):
+        return project_path
+    
+    # Fallback: try without abbreviated name
+    project_path = os.path.join(base_dir, client_code, project_code)
+    if os.path.exists(project_path):
+        return project_path
+    
+    return None

@@ -9,9 +9,6 @@ from decimal import Decimal
 import os
 from pathlib import Path
 
-# Constants
-SUBTASK_NA_VALUE = 'na'
-LUMP_SUM_PROJECT_TYPES = ['lump_sum', 'fixed', 'fixed_fee']
 
 
 def create_project_directories(client_code, project_code):
@@ -138,7 +135,6 @@ def get_invoice_data(invoice_code):
             p.project_name,
             p.project_desc,
             p.client_po,
-            p.project_type,
             c.code as client_code,
             c.name as client_name,
             c.contact_name,
@@ -172,7 +168,7 @@ def get_invoice_data(invoice_code):
             b.base_rate,
             b.base_miles_rate
         FROM bgs.timesheet t
-        LEFT JOIN bgs.resource r ON r.res_id = t.res_id
+        -- Resource name not needed, using res_id
         LEFT JOIN bgs.baseline b ON 
             b.project_code = t.project_code AND
             b.task_no = t.task_no AND
@@ -204,18 +200,12 @@ def get_invoice_data(invoice_code):
         total_mileage += mile_amt
         total_expenses += expense
         
-        # Format task display - handle 'na' subtasks
-        task_display = ts['task_no']
-        sub_task = ts.get('sub_task_no')
-        if sub_task is not None and str(sub_task).lower() != SUBTASK_NA_VALUE:
-            task_display = f"{ts['task_no']}:{sub_task}"
-        
         labor_items.append({
             'date': ts['ts_date'],
             'resource': ts['res_name'] or ts['res_id'],
             'hours': hours,
             'rate': rate,
-            'task': task_display,
+            'task': ts['task_no'],
             'total': labor_amt,
             'description': ts['ts_desc'],
             'miles': miles,
@@ -224,14 +214,7 @@ def get_invoice_data(invoice_code):
             'expense': expense
         })
     
-    # Check if project is lump sum/fixed fee - if so, exclude mileage and expenses
-    is_lump_sum = (inv.get('project_type') or '').lower() in LUMP_SUM_PROJECT_TYPES
-    
-    # Calculate grand total - exclude mileage/expenses for lump sum projects
-    if is_lump_sum:
-        grand_total = total_labor
-    else:
-        grand_total = total_labor + total_mileage + total_expenses
+    grand_total = total_labor + total_mileage + total_expenses
     
     return {
         'invoice': inv,
@@ -242,8 +225,7 @@ def get_invoice_data(invoice_code):
             'mileage': total_mileage,
             'expenses': total_expenses,
             'grand_total': grand_total
-        },
-        'is_lump_sum': is_lump_sum
+        }
     }
 
 def export_to_xlsx(data, output_dir):
@@ -311,6 +293,7 @@ def export_to_xlsx(data, output_dir):
     # Client section
     ws[f'A{row}'] = "Client"
     ws[f'A{row}'].font = header_font
+    ws[f'F{row}'] = f"Desc. {inv['project_code']}"
     row += 1
     
     ws[f'A{row}'] = inv['client_name']
@@ -460,7 +443,7 @@ def export_to_pdf(data, output_dir):
     # Date and invoice info
     info_data = [
         ["", f"Date: {inv['invoice_date'].strftime('%B %d, %Y')}"],
-        [f"Client", ""],
+        [f"Client", f"Desc. {inv['project_code']}"],
         [inv['client_name'], f"PO#: {inv['client_po'] or 'NA'}"],
         [f"{inv['city']}, {inv['state']}" if inv['city'] else "", "A/R Net 30"],
         ["", f"Baseline: {inv['project_code']}"],
@@ -688,6 +671,7 @@ def export_to_html(data, output_dir):
         </div>
         <div class="client-right" style="text-align: right;">
             <div>Date: {{ invoice.invoice_date.strftime('%B %d, %Y') }}</div>
+            <div>Desc. {{ invoice.project_code }}</div>
             <div>PO#: {{ invoice.client_po or 'NA' }}</div>
             <div>A/R Net 30</div>
             <div>Baseline: {{ invoice.project_code }}</div>
