@@ -135,6 +135,7 @@ def get_invoice_data(invoice_code):
             p.project_name,
             p.project_desc,
             p.client_po,
+            p.project_type,
             c.code as client_code,
             c.name as client_name,
             c.contact_name,
@@ -220,7 +221,15 @@ def get_invoice_data(invoice_code):
             'expense': expense
         })
     
-    grand_total = total_labor + total_mileage + total_expenses
+    # Check if project is lump sum/fixed fee - if so, exclude mileage and expenses
+    # Project types that indicate lump sum: 'lump_sum', 'fixed', 'fixed_fee'
+    is_lump_sum = inv.get('project_type', '').lower() in ['lump_sum', 'fixed', 'fixed_fee']
+    
+    # Calculate grand total - exclude mileage/expenses for lump sum projects
+    if is_lump_sum:
+        grand_total = total_labor
+    else:
+        grand_total = total_labor + total_mileage + total_expenses
     
     return {
         'invoice': inv,
@@ -231,7 +240,8 @@ def get_invoice_data(invoice_code):
             'mileage': total_mileage,
             'expenses': total_expenses,
             'grand_total': grand_total
-        }
+        },
+        'is_lump_sum': is_lump_sum
     }
 
 def export_to_xlsx(data, output_dir):
