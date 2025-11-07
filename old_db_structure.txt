@@ -1,0 +1,206 @@
+=========================================
+TABLES IN bgs SCHEMA
+=========================================
+  tablename   | schemaname 
+--------------+------------
+ tbl_base     | bgs
+ tbl_inv      | bgs
+ tbl_inv_note | bgs
+ tbl_project  | bgs
+ tbl_res      | bgs
+ tbl_task     | bgs
+ tbl_ts       | bgs
+(7 rows)
+
+
+=========================================
+RECORD COUNTS
+=========================================
+
+=========================================
+TABLE: tbl_client
+=========================================
+
+=========================================
+TABLE: tbl_project
+=========================================
+                                                Table "bgs.tbl_project"
+      Column      |          Type          | Collation | Nullable |                       Default                       
+------------------+------------------------+-----------+----------+-----------------------------------------------------
+ pk_project       | integer                |           | not null | nextval('bgs.tbl_project_pk_project_seq'::regclass)
+ project_name     | character varying(500) |           |          | 
+ fk_client        | character varying(500) |           | not null | 
+ pk_project_no    | character varying(500) |           | not null | 
+ project_status   | character varying(500) |           |          | 
+ project_desc     | character varying(500) |           |          | 
+ fk_project_group | character varying(500) |           |          | 
+ client_po        | character varying(500) |           |          | 
+Indexes:
+    "tbl_project_pkey" PRIMARY KEY, btree (pk_project, pk_project_no)
+    "uq_pkproj01" UNIQUE, btree (pk_project)
+    "uq_projno01" UNIQUE, btree (pk_project_no)
+Referenced by:
+    TABLE "bgs.tbl_base" CONSTRAINT "tbl_base_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+    TABLE "bgs.tbl_inv" CONSTRAINT "tbl_inv_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+    TABLE "bgs.tbl_task" CONSTRAINT "tbl_task_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+    TABLE "bgs.tbl_ts" CONSTRAINT "tbl_ts_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+
+ pk_project |             project_name              | fk_client | pk_project_no | project_status |                       project_desc                        | fk_project_group | client_po  
+------------+---------------------------------------+-----------+---------------+----------------+-----------------------------------------------------------+------------------+------------
+         23 | Annual Report Preparation             | pnav      | tex.23.1891   | active         | Annual Report Preparation 2022                            |                  | (null)
+         24 | Hydro-Evaluation / GW Model           | pnav      | tex.23.1892   | active         | Tex Tin Hydrogeologic Evaluation                          |                  | (null)
+         25 | General Consulting                    | pnav      | tex.23.1893   | active         | Tex Tin Consulting                                        |                  | (null)
+         32 | CP NRD                                | tbls      | tbls.24.1900  | active         | NRD Development                                           |                  | CPNRD-24-1
+         42 | 2025 Tex Tin Hydrogeologic Evaluation | ttsd      | tex.25.1894   | active         | Plume delineation / annual reporting / general consulting | textin           | ttsd25
+(5 rows)
+
+
+=========================================
+TABLE: tbl_res (resources)
+=========================================
+                                            Table "bgs.tbl_res"
+    Column    |          Type          | Collation | Nullable |                   Default                   
+--------------+------------------------+-----------+----------+---------------------------------------------
+ pk_res       | integer                |           | not null | nextval('bgs.tbl_res_pk_res_seq'::regclass)
+ pk_res_id    | character varying(500) |           | not null | 
+ res_name     | character varying(500) |           |          | 
+ res_contact  | character varying(500) |           |          | 
+ res_street01 | character varying(500) |           |          | 
+ res_street02 | character varying(500) |           |          | 
+ res_city     | character varying(500) |           |          | 
+ res_state    | character varying(500) |           |          | 
+ res_zip      | character varying(500) |           |          | 
+ res_phone01  | character varying(500) |           |          | 
+ res_phone02  | character varying(500) |           |          | 
+ res_email    | character varying(500) |           |          | 
+ res_website  | character varying(500) |           |          | 
+Indexes:
+    "tbl_res_pkey" PRIMARY KEY, btree (pk_res, pk_res_id)
+    "tbl_res_pk_res_id_idx" UNIQUE, btree (pk_res_id)
+    "tbl_res_pk_res_idx" UNIQUE, btree (pk_res)
+Referenced by:
+    TABLE "bgs.tbl_base" CONSTRAINT "tbl_base_fk_res_id_fkey" FOREIGN KEY (fk_res_id) REFERENCES bgs.tbl_res(pk_res_id)
+
+ pk_res | pk_res_id |          res_name           |   res_contact   |         res_street01         |        res_street02         |      res_city      | res_state | res_zip | res_phone01  | res_phone02  |          res_email           |        res_website        
+--------+-----------+-----------------------------+-----------------+------------------------------+-----------------------------+--------------------+-----------+---------+--------------+--------------+------------------------------+---------------------------
+      3 | microbac  | Microbac Laboratories, Inc. | Heather Tisdale | 600 East 17th Street South   | Microbac Laboratories, Inc. | Newton             | IA        | 50208   | 641 792-8451 | 641 840-2745 | heather.tisdale@microbac.com | https://www.microbac.com/
+      4 | geode     | Geode Environmental, LLC    | Ray Widder      | 6408 Harbor Oaks Drive       | 610 Harbor Oaks Drive       | Johnston           | IA        | 50131   | 515 975-9026 | 515 975-9026 | rwidder@geode-env.com        | geode-env.com
+      2 | K&A       | Klingner & Associates, P.C. | Jessica Coca    | 610 N. 4th Street, Suite 100 | 610 N. 4th Street Suite 100 | Burlington         | IA        | 52601   | 319 752-3603 | 319 572-7449 | jcoca@klingner.com           | https://www.klingner.com/
+      1 | F.Breen   | Breen Geoscience            | Frank Breen     | 4234 I-75 Business Spur      | PMB 354                     | Sault Sainte Marie | MI        | 49783   | 906 322-2605 | 906 322-2605 | frank@breengeosci.com        | 
+(4 rows)
+
+
+=========================================
+TABLE: tbl_task
+=========================================
+                                              Table "bgs.tbl_task"
+    Column     |          Type           | Collation | Nullable |                    Default                    
+---------------+-------------------------+-----------+----------+-----------------------------------------------
+ pk_task       | integer                 |           | not null | nextval('bgs.tbl_task_pk_task_seq'::regclass)
+ fk_proj_no    | character varying(500)  |           | not null | 
+ task_no       | character varying(500)  |           |          | 
+ task_name     | character varying(500)  |           |          | 
+ task_notes    | character varying(1000) |           |          | 
+ sub_task_no   | character varying(500)  |           |          | 
+ sub_task_name | character varying(500)  |           |          | 
+ task_co_no    | character varying(500)  |           |          | 
+ task_co_name  | character varying(500)  |           |          | 
+Indexes:
+    "tbl_task_pkey" PRIMARY KEY, btree (pk_task)
+Foreign-key constraints:
+    "tbl_task_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+
+ pk_task |    fk_proj_no    | task_no | task_name | task_notes | sub_task_no | sub_task_name | task_co_no | task_co_name 
+---------+------------------+---------+-----------+------------+-------------+---------------+------------+--------------
+       9 | tex.20.1077      | Task 00 | na        | na         | na          | na            |            | 
+      10 | joyce.21.1079    | Task 00 | na        | na         | na          | na            |            | 
+      11 | gsogc.21.1077    | Task 00 | na        | na         | na          | na            |            | 
+      12 | tbls.21.1079_cwk | Task 00 | na        | na         | na          | na            |            | 
+      13 | gsogc.21.1078    | Task 00 | na        | na         | na          | na            |            | 
+       1 | cnh.20.1885      | Task 00 | na        | na         | na          | na            |            | 
+       2 | cwk.20.1076      | Task 00 | na        | na         | na          | na            |            | 
+       3 | gsogc.19.1075    | Task 00 | na        | na         | na          | na            |            | 
+       4 | cnh.18.1880      | Task 00 | na        | na         | na          | na            |            | 
+       5 | csa.20.1080      | Task 00 | na        | na         | na          | na            |            | 
+(10 rows)
+
+
+=========================================
+TABLE: tbl_base (baseline)
+=========================================
+                                              Table "bgs.tbl_base"
+     Column      |          Type          | Collation | Nullable |                    Default                    
+-----------------+------------------------+-----------+----------+-----------------------------------------------
+ pk_base         | integer                |           | not null | nextval('bgs.tbl_base_pk_base_seq'::regclass)
+ fk_proj_no      | character varying(500) |           | not null | 
+ fk_task_no      | character varying(500) |           | not null | 
+ fk_sub_task_no  | character varying(500) |           | not null | 
+ fk_res_id       | character varying(500) |           | not null | 
+ base_units      | numeric(255,2)         |           |          | 
+ base_rate       | numeric(255,2)         |           |          | 
+ base_miles      | numeric(255,2)         |           |          | 
+ base_expense    | numeric(255,2)         |           |          | 
+ base_miles_rate | numeric(255,2)         |           |          | 
+Indexes:
+    "tbl_base_pkey" PRIMARY KEY, btree (pk_base)
+Foreign-key constraints:
+    "tbl_base_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+    "tbl_base_fk_res_id_fkey" FOREIGN KEY (fk_res_id) REFERENCES bgs.tbl_res(pk_res_id)
+
+ pk_base |  fk_proj_no  | fk_task_no | fk_sub_task_no | fk_res_id | base_units | base_rate | base_miles | base_expense | base_miles_rate 
+---------+--------------+------------+----------------+-----------+------------+-----------+------------+--------------+-----------------
+      29 | tbls.24.1899 | Task 01    | 01A            | F.Breen   |      90.00 |    100.00 |       0.00 |         0.00 |            0.54
+      30 | tbls.24.1899 | Task 01    | 01B            | F.Breen   |      18.00 |    100.00 |       0.00 |         0.00 |            0.54
+      32 | tbls.24.1900 | Task 3a    | na             | F.Breen   |      24.00 |    100.00 |       0.00 |         0.00 |            0.54
+      33 | tbls.24.1900 | Task 3b    | na             | F.Breen   |      16.00 |    100.00 |       0.00 |         0.00 |            0.54
+      34 | tbls.24.1900 | Task 3c    | na             | F.Breen   |      16.00 |    100.00 |       0.00 |         0.00 |            0.54
+      36 | tbls.24.1900 | Task 3d    | na             | F.Breen   |       4.00 |    100.00 |       0.00 |         0.00 |            0.54
+      37 | tbls.24.1900 | Task 3e    | na             | F.Breen   |       4.00 |    100.00 |       0.00 |         0.00 |            0.54
+      38 | tbls.24.1900 | Task 3f    | na             | F.Breen   |      16.00 |    100.00 |       0.00 |         0.00 |            0.54
+      39 | tbls.24.1900 | Task 3g    | na             | F.Breen   |      15.00 |    100.00 |       0.00 |         0.00 |            0.54
+      27 | cnh.24.1896  | Task 02    | b              | F.Breen   |       0.00 |      0.00 |       0.00 |      5000.00 |            0.54
+(10 rows)
+
+
+=========================================
+TABLE: tbl_ts (timesheets)
+=========================================
+                                             Table "bgs.tbl_ts"
+     Column     |          Type          | Collation | Nullable |                  Default                  
+----------------+------------------------+-----------+----------+-------------------------------------------
+ pk_ts          | integer                |           | not null | nextval('bgs.tbl_ts_pk_ts_seq'::regclass)
+ yr_mon         | character varying(500) |           | not null | 
+ fk_proj_no     | character varying(500) |           | not null | 
+ fk_task_no     | character varying(500) |           | not null | 
+ fk_sub_task_no | character varying(500) |           | not null | 
+ ts_date        | date                   |           | not null | 
+ fk_res_id      | character varying(500) |           | not null | 
+ ts_units       | numeric(255,2)         |           | not null | 
+ ts_mileage     | numeric(255,2)         |           |          | 
+ ts_expense     | numeric(255,2)         |           |          | 
+ ts_desc        | character varying(500) |           |          | 
+ fk_inv_no      | character varying(500) |           |          | 
+ fk_task_co_no  | character varying(500) |           |          | 
+Indexes:
+    "tbl_ts_pkey" PRIMARY KEY, btree (pk_ts)
+Foreign-key constraints:
+    "tbl_ts_fk_proj_no_fkey" FOREIGN KEY (fk_proj_no) REFERENCES bgs.tbl_project(pk_project_no)
+
+ pk_ts | yr_mon |  fk_proj_no  | fk_task_no | fk_sub_task_no |  ts_date   | fk_res_id | ts_units | ts_mileage | ts_expense |        ts_desc        |     fk_inv_no     | fk_task_co_no 
+-------+--------+--------------+------------+----------------+------------+-----------+----------+------------+------------+-----------------------+-------------------+---------------
+   446 | 2510   | cnh.25.1897  | T02        | na             | 2025-10-14 | F.Breen   |     0.00 |       0.00 |   23500.00 | fall sampling         |                   | 
+   469 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-10 | F.Breen   |     2.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+   468 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-09 | F.Breen   |     2.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+   467 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-08 | F.Breen   |     2.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+   471 | 2510   | tbls.25.1904 | T05:CH02   | na             | 2025-10-07 | F.Breen   |     4.00 |       0.00 |       0.00 | review septic         | tbls.25.1904.0003 | 
+   466 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-07 | F.Breen   |     1.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+   465 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-06 | F.Breen   |     1.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+   470 | 2510   | tbls.25.1904 | T05:CH02   | na             | 2025-10-06 | F.Breen   |     5.00 |       0.00 |       0.00 | review septic results | tbls.25.1904.0003 | 
+   464 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-03 | F.Breen   |     1.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+   463 | 2510   | tbls.25.1904 | T02        | S01            | 2025-10-02 | F.Breen   |     1.00 |       0.00 |       0.00 | REA Report Prep       | tbls.25.1904.0003 | 
+(10 rows)
+
+
+=========================================
+TABLE: tbl_invoice
+=========================================

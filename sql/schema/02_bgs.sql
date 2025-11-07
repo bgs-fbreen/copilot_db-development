@@ -1,10 +1,13 @@
 -- ============================================================================
--- Copilot Accounting System - BGS Schema
+-- Copilot Accounting System - BGS Schema (CORRECTED)
 -- Module: BGS (Breen GeoScience Consulting)
 -- Created: 2025-11-06
+-- Matches db_accounts_old workflow with tasks, resources, baseline
 -- ============================================================================
 
-CREATE SCHEMA IF NOT EXISTS bgs;
+-- Drop existing tables to rebuild correctly
+DROP SCHEMA IF EXISTS bgs CASCADE;
+CREATE SCHEMA bgs;
 
 -- ============================================================================
 -- CLIENTS
@@ -13,7 +16,7 @@ CREATE SCHEMA IF NOT EXISTS bgs;
 CREATE TABLE bgs.client (
     id SERIAL PRIMARY KEY,
     code VARCHAR(50) UNIQUE NOT NULL,           -- tbls, textin, olg, etc.
-    name VARCHAR(200) NOT NULL,                 -- "TBLS Engineers"
+    name VARCHAR(200) NOT NULL,
     contact_name VARCHAR(200),
     email VARCHAR(200),
     phone VARCHAR(50),
@@ -21,13 +24,12 @@ CREATE TABLE bgs.client (
     city VARCHAR(100),
     state VARCHAR(2),
     zip VARCHAR(20),
-    status VARCHAR(20) DEFAULT 'active',        -- active, inactive
+    status VARCHAR(20) DEFAULT 'active',
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE bgs.client IS 'BGS consulting clients';
-COMMENT ON COLUMN bgs.client.code IS 'Client code used in project numbers (e.g., tbls)';
 
 -- ============================================================================
 -- PROJECTS
@@ -36,17 +38,15 @@ COMMENT ON COLUMN bgs.client.code IS 'Client code used in project numbers (e.g.,
 CREATE TABLE bgs.project (
     project_code VARCHAR(50) PRIMARY KEY,       -- tbls.25.1904
     client_code VARCHAR(50) NOT NULL REFERENCES bgs.client(code),
-    project_year INTEGER NOT NULL,              -- 2025 (from 25)
+    project_year INTEGER NOT NULL,              -- 2025
     project_number INTEGER NOT NULL,            -- 1904
-    title VARCHAR(500) NOT NULL,
-    description TEXT,
-    project_type VARCHAR(50),                   -- consulting, fieldwork, report
+    project_name VARCHAR(500),
+    project_desc TEXT,
+    client_po VARCHAR(100),
+    project_type VARCHAR(50),
     status VARCHAR(50) DEFAULT 'active',        -- active, on-hold, completed, invoiced, closed
     start_date DATE,
     end_date DATE,
-    budget_hours NUMERIC(10,2),
-    budget_amount NUMERIC(12,2),
-    hourly_rate NUMERIC(10,2),
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -57,7 +57,110 @@ COMMENT ON COLUMN bgs.project.project_code IS 'Format: CLIENT.YY.PROJNO (e.g., t
 
 CREATE INDEX idx_project_client ON bgs.project(client_code);
 CREATE INDEX idx_project_status ON bgs.project(status);
-CREATE INDEX idx_project_year ON bgs.project(project_year);
+
+-- ============================================================================
+-- RESOURCES (You + Subcontractors)
+-- ============================================================================
+
+CREATE TABLE bgs.resource (
+    id SERIAL PRIMARY KEY,
+    res_id VARCHAR(50) UNIQUE NOT NULL,         -- F.Breen, microbac, geode
+    res_name VARCHAR(200) NOT NULL,
+    res_contact VARCHAR(200),
+    res_street01 VARCHAR(200),
+    res_street02 VARCHAR(200),
+    res_city VARCHAR(100),
+    res_state VARCHAR(2),
+    res_zip VARCHAR(20),
+    res_phone01 VARCHAR(50),
+    res_phone02 VARCHAR(50),
+    res_email VARCHAR(200),
+    res_website VARCHAR(200),
+    status VARCHAR(20) DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE bgs.resource IS 'Resources: Frank Breen + subcontractors';
+COMMENT ON COLUMN bgs.resource.res_id IS 'Resource identifier (e.g., F.Breen, microbac)';
+
+-- ============================================================================
+-- TASKS (Tasks and Subtasks for projects)
+-- ============================================================================
+
+CREATE TABLE bgs.task (
+    id SERIAL PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL REFERENCES bgs.project(project_code),
+    task_no VARCHAR(50) NOT NULL,               -- T01, T02, T01:CH01
+    task_name VARCHAR(500),
+    task_notes TEXT,
+    sub_task_no VARCHAR(50),                    -- S01, S02, or 'na'
+    sub_task_name VARCHAR(500),
+    task_co_no VARCHAR(50),                     -- CH01, CH02 (change orders)
+    task_co_name VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_code, task_no, sub_task_no)
+);
+
+COMMENT ON TABLE bgs.task IS 'Tasks and subtasks for BGS projects';
+COMMENT ON COLUMN bgs.task.task_no IS 'Task number (T01, T02, T01:CH01 for change orders)';
+COMMENT ON COLUMN bgs.task.sub_task_no IS 'Subtask (S01, S02) or "na"';
+
+CREATE INDEX idx_task_project ON bgs.task(project_code);
+
+-- ============================================================================
+-- BASELINE (Budget tracking with change orders)
+-- ============================================================================
+
+CREATE TABLE bgs.baseline (
+    id SERIAL PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL REFERENCES bgs.project(project_code),
+    task_no VARCHAR(50) NOT NULL,               -- T01, T02, T01:CH01
+    sub_task_no VARCHAR(50) NOT NULL,           -- S01 or 'na'
+    res_id VARCHAR(50) NOT NULL REFERENCES bgs.resource(res_id),
+    base_units NUMERIC(10,2),                   -- budgeted hours
+    base_rate NUMERIC(10,2),                    -- billing rate
+    base_miles NUMERIC(10,2),                   -- budgeted mileage
+    base_expense NUMERIC(10,2),                 -- budgeted expenses
+    base_miles_rate NUMERIC(10,2),              -- mileage rate ($/mile)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE bgs.baseline IS 'Project baseline - budget with change orders';
+COMMENT ON COLUMN bgs.baseline.task_no IS 'Task (T01, T01:CH01 for change order 1)';
+
+CREATE INDEX idx_baseline_project ON bgs.baseline(project_code);
+CREATE INDEX idx_baseline_resource ON bgs.baseline(res_id);
+
+-- ============================================================================
+-- TIMESHEETS (Time entry matching your bash script)
+-- ============================================================================
+
+CREATE TABLE bgs.timesheet (
+    id SERIAL PRIMARY KEY,
+    yr_mon VARCHAR(4) NOT NULL,                 -- yymm (2511 = Nov 2025)
+    project_code VARCHAR(50) NOT NULL REFERENCES bgs.project(project_code),
+    task_no VARCHAR(50) NOT NULL,               -- T01, T02
+    sub_task_no VARCHAR(50) NOT NULL,           -- S01 or 'na'
+    ts_date DATE NOT NULL,
+    res_id VARCHAR(50) NOT NULL REFERENCES bgs.resource(res_id),
+    ts_units NUMERIC(10,2) NOT NULL,            -- hours worked
+    ts_mileage NUMERIC(10,2) DEFAULT 0,
+    ts_expense NUMERIC(10,2) DEFAULT 0,
+    ts_desc TEXT,
+    invoice_code VARCHAR(100),                  -- tbls.25.1904.0001
+    task_co_no VARCHAR(50),                     -- change order if applicable
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE bgs.timesheet IS 'Time tracking for BGS projects';
+COMMENT ON COLUMN bgs.timesheet.yr_mon IS 'Year-month (yymm format: 2511 = Nov 2025)';
+COMMENT ON COLUMN bgs.timesheet.ts_units IS 'Hours worked';
+
+CREATE INDEX idx_timesheet_project ON bgs.timesheet(project_code);
+CREATE INDEX idx_timesheet_date ON bgs.timesheet(ts_date);
+CREATE INDEX idx_timesheet_resource ON bgs.timesheet(res_id);
+CREATE INDEX idx_timesheet_invoice ON bgs.timesheet(invoice_code);
 
 -- ============================================================================
 -- INVOICES
@@ -73,7 +176,7 @@ CREATE TABLE bgs.invoice (
     paid_amount NUMERIC(12,2) DEFAULT 0,
     status VARCHAR(50) DEFAULT 'draft',         -- draft, sent, partial, paid, overdue, cancelled
     payment_date DATE,
-    payment_method VARCHAR(50),                 -- check, ach, wire, credit_card
+    payment_method VARCHAR(50),
     check_number VARCHAR(50),
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -81,15 +184,12 @@ CREATE TABLE bgs.invoice (
 );
 
 COMMENT ON TABLE bgs.invoice IS 'BGS consulting invoices';
-COMMENT ON COLUMN bgs.invoice.invoice_code IS 'Format: CLIENT.YY.PROJNO.INVNO (e.g., tbls.25.1904.0001)';
 
 CREATE INDEX idx_invoice_project ON bgs.invoice(project_code);
 CREATE INDEX idx_invoice_status ON bgs.invoice(status);
-CREATE INDEX idx_invoice_date ON bgs.invoice(invoice_date);
-CREATE INDEX idx_invoice_payment ON bgs.invoice(payment_date);
 
 -- ============================================================================
--- INVOICE ITEMS (Line items on invoices)
+-- INVOICE ITEMS
 -- ============================================================================
 
 CREATE TABLE bgs.invoice_item (
@@ -103,130 +203,66 @@ CREATE TABLE bgs.invoice_item (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE bgs.invoice_item IS 'Line items for BGS invoices';
-
 CREATE INDEX idx_invoice_item_invoice ON bgs.invoice_item(invoice_code);
-
--- ============================================================================
--- TIMESHEETS
--- ============================================================================
-
-CREATE TABLE bgs.timesheet (
-    id SERIAL PRIMARY KEY,
-    project_code VARCHAR(50) NOT NULL REFERENCES bgs.project(project_code),
-    work_date DATE NOT NULL,
-    hours NUMERIC(5,2) NOT NULL,
-    description TEXT,
-    task_type VARCHAR(50),                      -- fieldwork, analysis, reporting, meeting
-    billable BOOLEAN DEFAULT true,
-    invoiced BOOLEAN DEFAULT false,
-    invoice_code VARCHAR(100) REFERENCES bgs.invoice(invoice_code),
-    notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE bgs.timesheet IS 'Time tracking for BGS projects';
-
-CREATE INDEX idx_timesheet_project ON bgs.timesheet(project_code);
-CREATE INDEX idx_timesheet_date ON bgs.timesheet(work_date);
-CREATE INDEX idx_timesheet_invoice ON bgs.timesheet(invoice_code);
-CREATE INDEX idx_timesheet_billable ON bgs.timesheet(billable, invoiced);
-
--- ============================================================================
--- SUBCONTRACTORS
--- ============================================================================
-
-CREATE TABLE bgs.subcontractor (
-    id SERIAL PRIMARY KEY,
-    code VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(200) NOT NULL,
-    company VARCHAR(200),
-    email VARCHAR(200),
-    phone VARCHAR(50),
-    address TEXT,
-    tax_id VARCHAR(50),                         -- EIN or SSN
-    status VARCHAR(20) DEFAULT 'active',
-    notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE bgs.subcontractor IS 'Subcontractors used on BGS projects';
-
--- ============================================================================
--- SUBCONTRACTOR EXPENSES (AP for subs)
--- ============================================================================
-
-CREATE TABLE bgs.subcontractor_expense (
-    id SERIAL PRIMARY KEY,
-    project_code VARCHAR(50) NOT NULL REFERENCES bgs.project(project_code),
-    subcontractor_id INTEGER NOT NULL REFERENCES bgs.subcontractor(id),
-    expense_date DATE NOT NULL,
-    amount NUMERIC(12,2) NOT NULL,
-    description TEXT,
-    invoice_number VARCHAR(100),
-    paid BOOLEAN DEFAULT false,
-    payment_date DATE,
-    check_number VARCHAR(50),
-    notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE bgs.subcontractor_expense IS 'Subcontractor expenses (accounts payable)';
-
-CREATE INDEX idx_subexp_project ON bgs.subcontractor_expense(project_code);
-CREATE INDEX idx_subexp_sub ON bgs.subcontractor_expense(subcontractor_id);
-CREATE INDEX idx_subexp_paid ON bgs.subcontractor_expense(paid);
 
 -- ============================================================================
 -- VIEWS
 -- ============================================================================
 
--- Project summary with hours and invoicing
-CREATE OR REPLACE VIEW bgs.vw_project_summary AS
+-- Project utilization (baseline vs actual)
+CREATE OR REPLACE VIEW bgs.vw_project_utilization AS
 SELECT 
-    p.project_code,
-    p.title,
-    c.name as client_name,
-    p.status,
-    p.start_date,
-    p.budget_hours,
-    COALESCE(SUM(t.hours), 0) as hours_worked,
-    p.budget_hours - COALESCE(SUM(t.hours), 0) as hours_remaining,
-    COUNT(DISTINCT i.invoice_code) as invoice_count,
-    COALESCE(SUM(i.amount), 0) as invoiced_total,
-    COALESCE(SUM(i.paid_amount), 0) as paid_total
-FROM bgs.project p
-LEFT JOIN bgs.client c ON c.code = p.client_code
-LEFT JOIN bgs.timesheet t ON t.project_code = p.project_code
-LEFT JOIN bgs.invoice i ON i.project_code = p.project_code
-GROUP BY p.project_code, p.title, c.name, p.status, p.start_date, p.budget_hours
-ORDER BY p.project_code DESC;
+    b.project_code,
+    p.project_name,
+    b.task_no,
+    b.sub_task_no,
+    b.res_id,
+    r.res_name,
+    b.base_units as budgeted_hours,
+    COALESCE(SUM(t.ts_units), 0) as actual_hours,
+    b.base_units - COALESCE(SUM(t.ts_units), 0) as remaining_hours,
+    b.base_rate,
+    b.base_units * b.base_rate as budgeted_amount,
+    COALESCE(SUM(t.ts_units), 0) * b.base_rate as actual_amount
+FROM bgs.baseline b
+JOIN bgs.project p ON p.project_code = b.project_code
+JOIN bgs.resource r ON r.res_id = b.res_id
+LEFT JOIN bgs.timesheet t ON t.project_code = b.project_code 
+    AND t.task_no = b.task_no 
+    AND t.sub_task_no = b.sub_task_no
+    AND t.res_id = b.res_id
+GROUP BY b.project_code, p.project_name, b.task_no, b.sub_task_no, 
+         b.res_id, r.res_name, b.base_units, b.base_rate
+ORDER BY b.project_code, b.task_no, b.sub_task_no;
 
--- Unbilled hours
-CREATE OR REPLACE VIEW bgs.vw_unbilled_hours AS
+-- Unbilled time
+CREATE OR REPLACE VIEW bgs.vw_unbilled_time AS
 SELECT 
     t.project_code,
-    p.title,
-    c.name as client_name,
-    t.work_date,
-    t.hours,
-    t.description,
-    p.hourly_rate,
-    t.hours * p.hourly_rate as billable_amount
+    p.project_name,
+    t.ts_date,
+    t.task_no,
+    t.res_id,
+    r.res_name,
+    t.ts_units,
+    b.base_rate,
+    t.ts_units * b.base_rate as amount,
+    t.ts_desc
 FROM bgs.timesheet t
 JOIN bgs.project p ON p.project_code = t.project_code
-JOIN bgs.client c ON c.code = p.client_code
-WHERE t.billable = true 
-  AND t.invoiced = false
-ORDER BY t.work_date DESC;
+JOIN bgs.resource r ON r.res_id = t.res_id
+LEFT JOIN bgs.baseline b ON b.project_code = t.project_code 
+    AND b.task_no = t.task_no 
+    AND b.res_id = t.res_id
+WHERE t.invoice_code IS NULL
+ORDER BY t.ts_date DESC;
 
--- Outstanding invoices (AR)
+-- Outstanding invoices
 CREATE OR REPLACE VIEW bgs.vw_outstanding_invoices AS
 SELECT 
     i.invoice_code,
     i.project_code,
-    p.title,
+    p.project_name,
     c.name as client_name,
     i.invoice_date,
     i.due_date,
