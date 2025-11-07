@@ -172,7 +172,7 @@ def get_invoice_data(invoice_code):
             b.base_rate,
             b.base_miles_rate
         FROM bgs.timesheet t
-        -- Resource name not needed, using res_id
+        LEFT JOIN bgs.resource r ON r.res_id = t.res_id
         LEFT JOIN bgs.baseline b ON 
             b.project_code = t.project_code AND
             b.task_no = t.task_no AND
@@ -215,7 +215,6 @@ def get_invoice_data(invoice_code):
             'hours': hours,
             'rate': rate,
             'task': task_display,
-            'sub_task': ts['sub_task_no'],
             'total': labor_amt,
             'description': ts['ts_desc'],
             'miles': miles,
