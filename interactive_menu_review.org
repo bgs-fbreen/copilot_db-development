@@ -1,0 +1,62 @@
+#+TITLE: Interactive Menu Refactor Plan
+#+AUTHOR: BreenGeoScience
+#+DATE: 2025-12-01
+#+OPTIONS: toc:t
+
+* Goal
+Introduce a robust interactive menu and reduce duplicated baseline/invoice logic.
+
+* Scope
+IN: CLI invocation changes, service abstractions, documentation updates.
+OUT: UI pagination, authentication, role management.
+
+* Phased Tasks
+(See checklist below.)
+
+* Checklist
+- Phase 1 (Interactive Mode)
+  - [ ] Add invoke_without_command logic to cli.py
+  - [ ] Create interactive.py
+  - [ ] Register missing commands in CLI or menu
+  - [ ] Update README
+
+- Phase 2 (Config)
+  - [ ] Populate config.py
+  - [ ] Replace hard-coded DB credentials
+
+- Phase 3 (Baseline)
+  - [ ] Create baseline_service.py
+  - [ ] Refactor baseline exporters
+  - [ ] Deprecate duplicate baseline functions
+
+- Phase 4 (Invoices)
+  - [ ] Create invoice_service.py
+  - [ ] Shared XLSX formatting layer
+  - [ ] Refactor invoice commands
+
+- Phase 5 (UI Helpers)
+  - [ ] Add ui_helpers.py for project/resource selection
+
+- Phase 6 (Cleanup)
+  - [ ] Remove duplicate delete_project
+  - [ ] Normalize clear screen usage
+  - [ ] Mark or remove empty command stubs
+
+- Phase 7 (Docs & Validation)
+  - [ ] Update manuals
+  - [ ] Add baseline/invoice tests (optional)
+
+* Menu Structure
+Main → Projects / Clients / Timesheets / Invoices / Reports / Maintenance / Version / Quit.
+
+* Acceptance Criteria
+(Refer to main review list.)
+
+* Migration Notes
+Explain removal of duplicated baseline code and why services centralize data logic.
+
+* Future Enhancements
+Pagination, search, richer TUI frameworks.
+
+* References
+See interactive_menu_review.org for full rationale.
