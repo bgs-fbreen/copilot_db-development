@@ -1,0 +1,166 @@
+#+TITLE: Interactive Menu Review - Copilot Accounting System
+#+AUTHOR: BreenGeoScience
+#+DATE: 2025-12-01
+#+OPTIONS: toc:t
+
+* Context
+This document archives the comprehensive review that motivated introducing an interactive menu interface for the Copilot Accounting System. It captures the current state, duplication hotspots, refactoring priorities, and a forward-looking plan for consolidation.
+
+* Objectives
+- Launch a full-screen style interactive menu when running =copilot= with no arguments.
+- Reduce cognitive load: allow users to select actions instead of memorizing multiple CLI flags.
+- Eliminate widespread duplication in baseline and invoice generation logic (PDF/XLSX/Workbook).
+- Centralize configuration (DB credentials, base paths) rather than hard-coding them across scripts.
+- Provide a foundation for future UI upgrades (pagination, search, single-keystroke navigation) without rewriting business logic.
+
+* Current State Overview
+The codebase has grown organically around many command modules. Patterns observed:
+- Repeated baseline XLSX/PDF creation logic in: baseline_export_cmd.py, project_cmd.py (create-baseline), project_create_baseline.py, project_workbook_cmd.py, create_projects_and_baseline.py.
+- Invoice generation/export logic duplicated across: invoice_cmd.py, invoice_export_cmd.py, project_workbook_cmd.py.
+- Directory creation logic repeated in: project_init_cmd.py, project_cmd.py, project_workbook_cmd.py, baseline_export_cmd.py, create_project_dirs.py.
+- Hard-coded DB credentials and paths appear in multiple modules (risk + maintenance burden).
+- Interactive flows embedded inside certain commands (new, edit, timesheet) rather than one unified top-level interface.
+- Mixed output styles: some use Rich, others use raw print.
+- Duplicate Click command definition for project deletion (two @project.command('delete') blocks) in project_cmd.py — the second overrides the first silently.
+- Placeholder empty modules: allocate_cmd.py, import_cmd.py, report_cmd.py.
+
+* Module-by-Module Review (Summary)
+- cli.py: Registers subset of available commands; no interactive fallback yet.
+- __init__.py: Exports more commands than are wired into cli.py (e.g., cleanup, export_baseline, workbook helpers).
+- ar_cmd.py: Solid aging report logic; potential enhancement: configurable aging buckets & export.
+- baseline_export_cmd.py: PDF export; mixes data retrieval and formatting; duplicates baseline grouping logic.
+- cleanup_cmd.py: Destructive operations with confirmations; recommend dry-run option and shared transactional helper.
+- client_cmd.py: Good interactive prompts; field naming inconsistency (email vs contact_email) worth normalizing.
+- create_project_dirs.py / create_projects_and_baseline.py: External scripts repeating in-repo logic — candidates for deprecation or conversion to unified commands.
+- edit_cmd.py: Contains its own submenu; baseline/task addition duplicates new_cmd.py and baseline flows.
+- invoice_cmd.py & invoice_export_cmd.py: Two parallel invoice workflows (draft/finalize vs export/finalize); unify via shared invoice service.
+- new_cmd.py: Multi-step wizard for client + project + tasks + baseline; logic fragments reused elsewhere.
+- project_cmd.py: Large aggregation including listing, baseline creation, deletion (duplicate), directory creation.
+- project_create_baseline.py & project_workbook_cmd.py: Additional overlapping baseline logic and workbook pattern; workbook concept is central and should be canonical.
+- timesheet_cmd.py: Interactive timesheet entry replicates selection patterns; opportunity for shared selection helpers.
+- version_cmd.py: Simple and fine.
+
+* Duplication & Cross-Cutting Issues
+| Area              | Impact                                 | Resolution Strategy                |
+|-------------------|-----------------------------------------|------------------------------------|
+| Baseline export   | Hard to maintain/export variations      | baseline_service + format modules  |
+| Invoice export    | Inconsistent formatting & totals logic  | invoice_service + format layers    |
+| Directory creation| Repeated fallback/mount logic           | central paths/config               |
+| DB credentials    | Security & portability risk             | config.py + dotenv                 |
+| Resource display  | Inconsistent (res_id vs res_name)       | Standard helper: show both when available |
+| Clear screen      | Repeated functions                      | Use console.clear() via Rich       |
+| Change order tasks| Pattern repeated                        | Shared task utilities              |
+| Interactive loops | Conflicts with planned global menu      | Treat commands as atomic run blocks|
+
+* Refactoring Priorities (Ordered)
+1. Interactive fallback in cli.py + interactive.py menu system.
+2. Centralize configuration (env-driven) in config.py.
+3. Consolidate baseline logic (baseline_service.py + baseline_format_xlsx.py + baseline_format_pdf.py).
+4. Consolidate invoice logic (invoice_service.py + invoice_format_xlsx.py).
+5. Shared UI helpers (ui_helpers.py) for selecting projects/resources/tasks.
+6. Remove duplication & placeholders; fix duplicate delete command.
+7. Documentation updates (README.org, manual, new plan file).
+
+* Interactive Menu Design
+Top-Level Menu (example):
+- Projects
+- Clients
+- Timesheets
+- Invoices
+- Reports
+- Maintenance
+- Version / Help
+- Quit
+
+Navigation Conventions:
+- q: quit from anywhere.
+- b: go back from a submenu to main.
+- Numeric or short mnemonic keys for actions.
+- Post-action pause: "Press Enter to return..." for clarity.
+
+* Proposed Service Modules
+- baseline_service.py: Canonical data retrieval & grouping; returns structured dict {tasks, grand_total}.
+- invoice_service.py: Unbilled time aggregation, invoice line item generation, totals computation.
+- ui_helpers.py: Project selection, resource listing, confirmation wrappers.
+- paths/config modules: get_base_dir(), get_fallback_dir(), sanitize helpers consolidated.
+
+* Risks & Mitigations
+| Risk                                   | Mitigation |
+|----------------------------------------|-----------|
+| Nested interactive loops cause confusion | Treat each command as modal; return to menu after completion. |
+| Hard-coded credentials remain           | Enforce config.py usage; add pre-run assert if hard-coded strings detected. |
+| Future format changes (baseline/invoice) reintroduce duplication | Add unit tests around service outputs + formatting layer. |
+| Large table outputs overwhelm screen    | Future enhancement: pagination or filtering. |
+| Duplicate deletion logic persists       | Remove second delete_project definition immediately. |
+
+* Quick Wins
+1. Add interactive fallback in cli.py.
+2. Fix duplicate project delete command.
+3. Introduce config.py reading .env for DB/paths.
+4. Create baseline_service.py and refactor one exporter.
+5. Update README.org with interactive usage.
+6. Remove or tag empty placeholder command files.
+
+* Long-Term Evolution
+- Migrate to a richer TUI (textual or prompt_toolkit) for real-time key handling.
+- Add pagination, search, and fuzzy find.
+- Extend reporting: AR aging export to CSV/Excel; utilization trends.
+- Abstract billing/invoicing rules for multi-entity support.
+
+* Appendix: Baseline Service Sketch
+#+begin_src python
+from copilot.db import execute_query
+from decimal import Decimal
+
+def get_baseline_data(project_code):
+    rows = execute_query("""
+        SELECT b.task_no, b.sub_task_no, t.task_name, b.res_id,
+               b.base_units, b.base_rate, b.base_miles, b.base_miles_rate,
+               b.base_expense,
+               (COALESCE(b.base_units,0)*COALESCE(b.base_rate,0) +
+                COALESCE(b.base_miles,0)*COALESCE(b.base_miles_rate,0) +
+                COALESCE(b.base_expense,0)) AS total
+        FROM bgs.baseline b
+        LEFT JOIN bgs.task t ON t.project_code=b.project_code
+                            AND t.task_no=b.task_no
+                            AND t.sub_task_no=b.sub_task_no
+        WHERE b.project_code=%s
+        ORDER BY b.task_no, b.sub_task_no, b.res_id
+    "", (project_code,))
+    tasks = {}
+    grand = Decimal('0')
+    for r in rows:
+        key = r['task_no']
+        name = r['task_name'] or 'Consulting'
+        if key not in tasks:
+            tasks[key] = {'task_no': key, 'task_name': name,
+                          'resources': [], 'subtotal': Decimal('0')}
+        total = Decimal(str(r['total'] or 0))
+        expense = Decimal(str(r['base_expense'] or 0))
+        tasks[key]['resources'].append({
+            'resource': r['res_id'],
+            'units': r['base_units'],
+            'rate': r['base_rate'],
+            'miles': r['base_miles'],
+            'miles_rate': r['base_miles_rate'],
+            'expense': expense,
+            'total': total,
+            'description': name
+        })
+        tasks[key]['subtotal'] += total
+        grand += total
+    return {'tasks': tasks, 'grand_total': grand}
+#+end_src
+
+* Appendix: Interactive Menu Pseudocode
+#+begin_src python
+class Menu:
+    def __init__(self, title, items):
+        self.title = title  # string
+        self.items = items  # dict: key -> {label, action|submenu, args?}
+
+# Dispatcher uses cli.commands[name].main([...]) to invoke existing Click commands.
+#+end_src
+
+* Attribution
+Created: 2025-12-01 based on repository review.
