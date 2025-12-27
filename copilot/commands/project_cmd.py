@@ -611,22 +611,27 @@ def show_project_actual(project_code):
         total_paid = 0
         
         for inv in invoices:
+            invoice_date = inv['invoice_date']
+            # Skip invoice if it has no invoice_date
+            if not invoice_date:
+                continue
+            
             amount = float(inv['amount'] or 0)
             paid = float(inv['paid_amount'] or 0)
             balance = amount - paid
             total_invoiced += amount
             total_paid += paid
-            
-            invoice_date = inv['invoice_date']
-            # Skip invoice if it has no invoice_date
-            if not invoice_date:
-                continue
                 
             due_date = inv['due_date'] or (invoice_date + timedelta(days=30))
             
             # Determine status and color
             status = inv['status'] or 'draft'
-            invoice_number = int(inv['invoice_number']) if inv['invoice_number'] else 0
+            
+            # Safely convert invoice_number to int
+            try:
+                invoice_number = int(inv['invoice_number']) if inv['invoice_number'] else 0
+            except (ValueError, TypeError):
+                invoice_number = 0
             
             if status == 'paid':
                 status_color = "green"
@@ -648,7 +653,7 @@ def show_project_actual(project_code):
                 if days_outstanding > 90:
                     days_str = f"[red]{days_outstanding}[/red]"
                 elif days_outstanding > 60:
-                    days_str = f"[yellow]{days_outstanding}[/yellow]"
+                    days_str = f"[bright_yellow]{days_outstanding}[/bright_yellow]"
                 elif days_outstanding > 30:
                     days_str = f"[yellow]{days_outstanding}[/yellow]"
             
