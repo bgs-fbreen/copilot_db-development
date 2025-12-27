@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 import os
-import psycopg2
-
-DB_HOST = "192.168.30.180"
-DB_NAME = "copilot_db"
-DB_USER = "frank"
-DB_PASS = "basalt63"
+from copilot.db import get_connection
 
 PARENT = "/mnt/sda1/01_bgm_projman/Active/"
 SUBFOLDERS = [
@@ -25,12 +20,7 @@ def sanitize(s):
     )
 
 def main():
-    conn = psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS
-    )
+    conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
         SELECT 
