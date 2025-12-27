@@ -618,10 +618,16 @@ def show_project_actual(project_code):
             total_paid += paid
             
             invoice_date = inv['invoice_date']
+            # Skip invoice if it has no invoice_date
+            if not invoice_date:
+                continue
+                
             due_date = inv['due_date'] or (invoice_date + timedelta(days=30))
             
             # Determine status and color
             status = inv['status'] or 'draft'
+            invoice_number = int(inv['invoice_number']) if inv['invoice_number'] else 0
+            
             if status == 'paid':
                 status_color = "green"
                 days_str = "-"
@@ -650,7 +656,7 @@ def show_project_actual(project_code):
             balance_color = "white" if balance == 0 else "yellow"
             
             inv_table.add_row(
-                f"{inv['invoice_number']:04d}",
+                f"{invoice_number:04d}",
                 invoice_date.strftime('%Y-%m-%d'),
                 due_date.strftime('%Y-%m-%d'),
                 f"${amount:,.2f}",
