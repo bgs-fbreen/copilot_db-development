@@ -9,6 +9,8 @@ from copilot.db import execute_query, get_connection
 from datetime import datetime
 import os
 from pathlib import Path
+import xlsxwriter
+import re
 
 console = Console()
 
@@ -134,9 +136,6 @@ def create_baseline(project_code):
     Generate/re-generate the Baseline XLSX for the given project code.
     If no code specified, shows a list and prompts for entry.
     """
-    import xlsxwriter
-    import re
-    
     COMPANY_NAME = "Breen GeoScience Management, Inc."
     COMPANY_ADDR1 = "PMB #354, 4234 I-75 Business Spur"
     COMPANY_ADDR2 = "Sault Ste. Marie, Michigan USA 49783"
