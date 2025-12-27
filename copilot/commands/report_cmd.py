@@ -554,8 +554,13 @@ def project_report(project_code, all):
         total_invoiced = float(proj['total_invoiced'] or 0)
         total_paid = float(proj['total_paid'] or 0)
         outstanding_ar = total_invoiced - total_paid
-        profit = total_paid - total_cost
-        margin = (profit / total_paid * 100) if total_paid > 0 else 0
+        
+        # Accrual-based profit (invoiced revenue vs costs)
+        gross_profit = total_invoiced - total_cost
+        gross_margin = (gross_profit / total_invoiced * 100) if total_invoiced > 0 else 0
+        
+        # Cash-based position (actual cash received vs costs spent)
+        cash_position = total_paid - total_cost
         
         # Display project
         console.print(f"[bold cyan]Project:[/bold cyan] {proj['project_code']}")
@@ -563,18 +568,32 @@ def project_report(project_code, all):
         console.print(f"[bold]Name:[/bold] {proj['project_name']}")
         console.print(f"[bold]Status:[/bold] {proj['status']}\n")
         
-        console.print(f"Total Invoiced:        ${total_invoiced:>12,.2f}")
-        console.print(f"Total Paid:            ${total_paid:>12,.2f}")
-        console.print(f"Outstanding AR:        ${outstanding_ar:>12,.2f}\n")
+        # Revenue section
+        console.print(f"[bold]Revenue:[/bold]")
+        console.print(f"  Total Invoiced:      ${total_invoiced:>12,.2f}")
+        console.print(f"  Total Paid:          ${total_paid:>12,.2f}")
+        console.print(f"  Outstanding AR:      ${outstanding_ar:>12,.2f}\n")
         
-        console.print(f"Labor Costs:           ${labor_cost:>12,.2f}")
-        console.print(f"Mileage Costs:         ${mileage_cost:>12,.2f}")
-        console.print(f"Direct Expenses:       ${expense_cost:>12,.2f}")
-        console.print(f"Total Costs:           ${total_cost:>12,.2f}\n")
+        # Costs section
+        console.print(f"[bold]Costs:[/bold]")
+        console.print(f"  Labor:               ${labor_cost:>12,.2f}")
+        console.print(f"  Mileage:             ${mileage_cost:>12,.2f}")
+        console.print(f"  Direct Expenses:     ${expense_cost:>12,.2f}")
+        console.print(f"  Total Costs:         ${total_cost:>12,.2f}\n")
         
-        profit_color = "green" if profit >= 0 else "red"
-        console.print(f"[{profit_color}]Profit:                ${profit:>12,.2f}[/{profit_color}]")
-        console.print(f"[{profit_color}]Profit Margin:         {margin:>12.1f}%[/{profit_color}]")
+        # Profitability section
+        console.print(f"[bold]Profitability:[/bold]")
+        gross_color = "green" if gross_profit >= 0 else "red"
+        gross_label = "Gross Profit:" if gross_profit >= 0 else "Gross Loss:"
+        console.print(f"  [{gross_color}]{gross_label:<18} ${abs(gross_profit):>12,.2f}[/{gross_color}]")
+        console.print(f"  [{gross_color}]Gross Margin:      {gross_margin:>12.1f}%[/{gross_color}]")
+        
+        # Cash position (shows actual cash flow status)
+        cash_color = "green" if cash_position >= 0 else "yellow"
+        cash_label = "Cash Position:" if cash_position >= 0 else "Cash Deficit:"
+        console.print(f"  [{cash_color}]{cash_label:<18} ${abs(cash_position):>12,.2f}[/{cash_color}]")
+        if cash_position < 0 and outstanding_ar > 0:
+            console.print(f"  [dim](Awaiting ${outstanding_ar:,.2f} in AR)[/dim]")
         
         if all:
             console.print("\n" + "─" * 60 + "\n")
