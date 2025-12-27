@@ -5,14 +5,18 @@ from copilot.commands import version, timesheet, new, edit, ar, invoice, client,
 
 console = Console()
 
-@click.group()
-def cli():
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
     """
     Copilot Accounting System
 
     BGS, MHB (711pine, 905brown, 819helen)
     """
-    pass
+    if ctx.invoked_subcommand is None:
+        # No subcommand provided, launch interactive menu
+        from copilot.interactive import run_interactive_menu
+        run_interactive_menu()
 
 # Register commands
 cli.add_command(version)
