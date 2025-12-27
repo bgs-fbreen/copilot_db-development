@@ -531,9 +531,12 @@ def project_report(project_code, all):
     console.print("[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
     
     for proj in projects:
-        # Get labor costs (hours * rate from baseline)
-        cost_query = """
-            SELECT COALESCE(SUM(t.ts_units * COALESCE(b.base_rate, 0)), 0) as labor_cost 
+        # Get labor and mileage costs in a single query
+        costs_query = """
+            SELECT 
+                COALESCE(SUM(t.ts_units * COALESCE(b.base_rate, 0)), 0) as labor_cost,
+                COALESCE(SUM(t.ts_mileage * COALESCE(b.base_miles_rate, 0)), 0) as mileage_cost,
+                COALESCE(SUM(t.ts_expense), 0) as expense_cost
             FROM bgs.timesheet t
             LEFT JOIN bgs.baseline b ON 
                 b.project_code = t.project_code 
@@ -542,31 +545,10 @@ def project_report(project_code, all):
                 AND b.res_id = t.res_id
             WHERE t.project_code = %s
         """
-        cost_result = execute_query(cost_query, [proj['project_code']])
-        labor_cost = float(cost_result[0]['labor_cost']) if cost_result else 0
-        
-        # Get mileage costs (mileage * mileage rate from baseline)
-        mileage_query = """
-            SELECT COALESCE(SUM(t.ts_mileage * COALESCE(b.base_miles_rate, 0)), 0) as mileage_cost 
-            FROM bgs.timesheet t
-            LEFT JOIN bgs.baseline b ON 
-                b.project_code = t.project_code 
-                AND b.task_no = t.task_no 
-                AND b.sub_task_no = t.sub_task_no
-                AND b.res_id = t.res_id
-            WHERE t.project_code = %s
-        """
-        mileage_result = execute_query(mileage_query, [proj['project_code']])
-        mileage_cost = float(mileage_result[0]['mileage_cost']) if mileage_result else 0
-        
-        # Get direct expense costs from timesheet
-        expense_query = """
-            SELECT COALESCE(SUM(ts_expense), 0) as expense_cost 
-            FROM bgs.timesheet 
-            WHERE project_code = %s
-        """
-        expense_result = execute_query(expense_query, [proj['project_code']])
-        expense_cost = float(expense_result[0]['expense_cost']) if expense_result else 0
+        costs_result = execute_query(costs_query, [proj['project_code']])
+        labor_cost = float(costs_result[0]['labor_cost']) if costs_result else 0
+        mileage_cost = float(costs_result[0]['mileage_cost']) if costs_result else 0
+        expense_cost = float(costs_result[0]['expense_cost']) if costs_result else 0
         
         total_cost = labor_cost + mileage_cost + expense_cost
         total_invoiced = float(proj['total_invoiced'] or 0)
