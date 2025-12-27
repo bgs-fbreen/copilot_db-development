@@ -10,6 +10,9 @@ from copilot.commands.project_cmd import project
 from copilot.commands.baseline_export_cmd import export_baseline
 from copilot.commands.project_workbook_cmd import create_workbook, add_invoice_to_workbook
 from copilot.commands.cleanup_cmd import cleanup
+from copilot.commands.import_cmd import import_cmd
+from copilot.commands.allocate_cmd import allocate
 
 __all__ = ['version', 'timesheet', 'new', 'edit', 'ar', 'invoice', 'client', 'project', 
-           'export_baseline', 'create_workbook', 'add_invoice_to_workbook', 'cleanup']
+           'export_baseline', 'create_workbook', 'add_invoice_to_workbook', 'cleanup',
+           'import_cmd', 'allocate']
