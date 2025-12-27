@@ -16,6 +16,7 @@ console = Console()
 
 PROJECT_BASE_DIR = "/mnt/sda1/01_bgm_projman/Active"
 PROJECT_FALLBACK_DIR = os.path.expanduser("~/bgm_projects/Active")
+DEFAULT_INVOICE_DUE_DAYS = 30
 
 def clear_screen():
     os.system('clear' if os.name != 'nt' else 'cls')
@@ -622,7 +623,7 @@ def show_project_actual(project_code):
             total_invoiced += amount
             total_paid += paid
                 
-            due_date = inv['due_date'] or (invoice_date + timedelta(days=30))
+            due_date = inv['due_date'] or (invoice_date + timedelta(days=DEFAULT_INVOICE_DUE_DAYS))
             
             # Determine status and color
             status = inv['status'] or 'draft'
@@ -638,7 +639,12 @@ def show_project_actual(project_code):
                 days_str = "-"
             else:
                 days_outstanding = (today - invoice_date).days
-                days_str = str(days_outstanding)
+                
+                # Handle future-dated invoices
+                if days_outstanding < 0:
+                    days_str = "0"
+                else:
+                    days_str = str(days_outstanding)
                 
                 # Check if overdue
                 if today > due_date and status != 'paid':
@@ -649,7 +655,7 @@ def show_project_actual(project_code):
                 else:
                     status_color = "dim"
                 
-                # Color code days
+                # Color code days (only for positive values)
                 if days_outstanding > 90:
                     days_str = f"[red]{days_outstanding}[/red]"
                 elif days_outstanding > 60:
