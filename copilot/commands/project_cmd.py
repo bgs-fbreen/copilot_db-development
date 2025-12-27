@@ -468,7 +468,7 @@ def show_project_actual(project_code):
     if proj['client_po']:
         console.print(f"[bold]Job No.:[/bold]     {proj['client_po']}")
     if proj['project_desc']:
-        console.print(f"[bold]Description:[/bold] {(proj['project_desc'] or '')[:60]}")
+        console.print(f"[bold]Description:[/bold] {proj['project_desc'][:60]}")
     
     # Get baseline vs actual by task
     actual_data = execute_query("""
