@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
-import psycopg2
+from copilot.db import get_connection
 import xlsxwriter
 from datetime import datetime
 
@@ -17,11 +17,6 @@ SUBFOLDERS = [
     "04_subcontractors",
     "05_reports",
 ]
-
-DB_HOST = "192.168.30.180"
-DB_NAME = "copilot_db"
-DB_USER = "frank"
-DB_PASS = "basalt63"
 
 def sanitize(name):
     return re.sub(r'[^a-zA-Z0-9_]', '_', name.strip().replace(' ', '_'))[:32]
@@ -48,7 +43,7 @@ def make_description(sub_task_no, task_name, task_notes):
     return desc.strip()
 
 def main():
-    conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS)
+    conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
         SELECT
