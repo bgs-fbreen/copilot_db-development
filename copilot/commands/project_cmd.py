@@ -9,6 +9,8 @@ from copilot.db import execute_query, get_connection
 from datetime import datetime
 import os
 from pathlib import Path
+import xlsxwriter
+import re
 
 console = Console()
 
@@ -127,10 +129,6 @@ def list_projects(client, status):
 
 # ---- create-baseline subcommand (copied in-module for ease, modularize if desired) ----
 
-import psycopg2
-import xlsxwriter
-import re
-
 @project.command("create-baseline")
 @click.argument("project_code", required=False)
 def create_baseline(project_code):
@@ -138,10 +136,6 @@ def create_baseline(project_code):
     Generate/re-generate the Baseline XLSX for the given project code.
     If no code specified, shows a list and prompts for entry.
     """
-    DB_HOST = "192.168.30.180"
-    DB_NAME = "copilot_db"
-    DB_USER = "frank"
-    DB_PASS = "basalt63"
     COMPANY_NAME = "Breen GeoScience Management, Inc."
     COMPANY_ADDR1 = "PMB #354, 4234 I-75 Business Spur"
     COMPANY_ADDR2 = "Sault Ste. Marie, Michigan USA 49783"
@@ -168,7 +162,7 @@ def create_baseline(project_code):
                 desc = task_notes
         return desc.strip()
 
-    conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS)
+    conn = get_connection()
     cur = conn.cursor()
     if not project_code:
         cur.execute("SELECT project_code, project_name FROM bgs.project WHERE status = 'active' ORDER BY project_code")
@@ -354,47 +348,6 @@ def create_baseline(project_code):
     cur.close()
     conn.close()
 
-@project.command('delete')
-@click.argument('project_code')
-@click.option('--yes', is_flag=True, help='Confirm deletion without prompting')
-def delete_project(project_code, yes):
-    """
-    Delete a project and all related data from the database (tasks, baseline, timesheet, etc).
-    This will NOT delete anything from the resources table.
-    """
-    import psycopg2
-
-    DB_HOST = "192.168.30.180"
-    DB_NAME = "copilot_db"
-    DB_USER = "frank"
-    DB_PASS = "basalt63"
-
-    confirmation = yes or click.confirm(
-        f"Are you sure you want to delete project '{project_code}' and ALL related tasks, baselines, timesheets, etc? This CANNOT be undone.",
-        abort=True
-    )
-
-    delete_sql = [
-        "DELETE FROM bgs.timesheet WHERE project_code = %s",
-        "DELETE FROM bgs.baseline WHERE project_code = %s",
-        "DELETE FROM bgs.task WHERE project_code = %s",
-        "DELETE FROM bgs.project WHERE project_code = %s"
-    ]
-
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS
-        )
-        cur = conn.cursor()
-        for sql in delete_sql:
-            cur.execute(sql, (project_code,))
-        conn.commit()
-        click.echo(f"Project {project_code} and all related records deleted successfully.")
-        cur.close()
-        conn.close()
-    except Exception as e:
-        click.echo(f"Error deleting project: {e}")
-
 
 @project.command('delete')
 @click.argument('project_code', required=False)
@@ -404,17 +357,8 @@ def delete_project(project_code, yes):
     Delete a project and all related data from the database (tasks, baseline, timesheet, etc).
     This will NOT delete anything from the resources table.
     """
-    import psycopg2
-
-    DB_HOST = "192.168.30.180"
-    DB_NAME = "copilot_db"
-    DB_USER = "frank"
-    DB_PASS = "basalt63"
-
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS
-        )
+        conn = get_connection()
         cur = conn.cursor()
         # If no project_code, list active ones and prompt for selection
         if not project_code:
