@@ -1,7 +1,7 @@
 """Main CLI entry point for Copilot Accounting System"""
 import click
 from rich.console import Console
-from copilot.commands import version, timesheet, new, edit, ar, invoice, client, project, report, baseline
+from copilot.commands import version, timesheet, new, edit, ar, invoice, client, project, report, baseline, budget
 
 console = Console()
 
@@ -29,6 +29,7 @@ cli.add_command(client)
 cli.add_command(project)
 cli.add_command(report)
 cli.add_command(baseline)
+cli.add_command(budget)
 
 if __name__ == '__main__':
     cli()
