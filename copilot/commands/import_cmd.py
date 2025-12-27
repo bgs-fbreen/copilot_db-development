@@ -141,7 +141,7 @@ def is_duplicate_transaction(account_code, trans_date, amount, payee):
     return result[0]['count'] > 0
 
 
-@click.group()
+@click.group(name='import')
 def import_cmd():
     """Import bank transactions from files"""
     pass
@@ -496,7 +496,3 @@ def import_status(account):
             console.print()
     
     console.print(f"\n[bold]Total uncategorized: {len(transactions)}[/bold]\n")
-
-
-# Export as 'import' for CLI
-import_cmd.name = 'import'
