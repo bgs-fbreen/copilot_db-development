@@ -10,6 +10,11 @@ import os
 
 console = Console()
 
+# Display formatting constants
+MAX_PROJECT_NAME_LENGTH = 28
+MAX_TASK_NAME_LENGTH = 24
+MAX_SUB_TASK_NAME_LENGTH = 12
+
 def clear_screen():
     """Clear the terminal screen"""
     os.system('clear' if os.name != 'nt' else 'cls')
@@ -36,9 +41,10 @@ def show_project_list():
     table.add_column("Project Code", style="yellow")
     
     for proj in projects:
+        project_name = proj['project_name'] or ''
         table.add_row(
             proj['client_code'],
-            (proj['project_name'] or '')[:28],
+            project_name[:MAX_PROJECT_NAME_LENGTH],
             proj['project_code']
         )
     
@@ -127,13 +133,22 @@ def show_baseline(project_code):
         total = labor + miles_cost + expense
         grand_total += total
         
-        sub_name = row['sub_task_name'][:12] if row['sub_task_name'] else 'na'
+        # Safely handle sub_task_name (may be None)
+        sub_task_name = row['sub_task_name']
+        if sub_task_name and str(sub_task_name).strip():
+            sub_name = str(sub_task_name)[:MAX_SUB_TASK_NAME_LENGTH]
+        else:
+            sub_name = 'na'
+        
+        # Safely handle task_name (may be None)
+        task_name = row['task_name'] or ''
+        truncated_task_name = str(task_name)[:MAX_TASK_NAME_LENGTH]
         
         table.add_row(
             row['task_no'],
             row['sub_task_no'],
             row['res_id'],
-            (row['task_name'] or '')[:24],
+            truncated_task_name,
             sub_name,
             f"{units:.2f}",
             f"{rate:.2f}",
