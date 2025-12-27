@@ -531,17 +531,26 @@ def project_report(project_code, all):
     console.print("[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
     
     for proj in projects:
-        # Get timesheet costs
-        cost_query = "SELECT COALESCE(SUM(ts_hours * ts_rate), 0) as labor_cost FROM bgs.timesheet WHERE project_code = %s"
-        cost_result = execute_query(cost_query, [proj['project_code']])
-        labor_cost = float(cost_result[0]['labor_cost']) if cost_result else 0
+        # Get labor and mileage costs in a single query
+        costs_query = """
+            SELECT 
+                COALESCE(SUM(t.ts_units * COALESCE(b.base_rate, 0)), 0) as labor_cost,
+                COALESCE(SUM(t.ts_mileage * COALESCE(b.base_miles_rate, 0)), 0) as mileage_cost,
+                COALESCE(SUM(t.ts_expense), 0) as expense_cost
+            FROM bgs.timesheet t
+            LEFT JOIN bgs.baseline b ON 
+                b.project_code = t.project_code 
+                AND b.task_no = t.task_no 
+                AND b.sub_task_no = t.sub_task_no
+                AND b.res_id = t.res_id
+            WHERE t.project_code = %s
+        """
+        costs_result = execute_query(costs_query, [proj['project_code']])
+        labor_cost = float(costs_result[0]['labor_cost']) if costs_result else 0
+        mileage_cost = float(costs_result[0]['mileage_cost']) if costs_result else 0
+        expense_cost = float(costs_result[0]['expense_cost']) if costs_result else 0
         
-        # Get expense costs
-        expense_query = "SELECT COALESCE(SUM(ABS(amount)), 0) as expense_cost FROM acc.transaction WHERE project_code = %s AND amount < 0"
-        expense_result = execute_query(expense_query, [proj['project_code']])
-        expense_cost = float(expense_result[0]['expense_cost']) if expense_result else 0
-        
-        total_cost = labor_cost + expense_cost
+        total_cost = labor_cost + mileage_cost + expense_cost
         total_invoiced = float(proj['total_invoiced'] or 0)
         total_paid = float(proj['total_paid'] or 0)
         outstanding_ar = total_invoiced - total_paid
@@ -559,7 +568,8 @@ def project_report(project_code, all):
         console.print(f"Outstanding AR:        ${outstanding_ar:>12,.2f}\n")
         
         console.print(f"Labor Costs:           ${labor_cost:>12,.2f}")
-        console.print(f"Expense Costs:         ${expense_cost:>12,.2f}")
+        console.print(f"Mileage Costs:         ${mileage_cost:>12,.2f}")
+        console.print(f"Direct Expenses:       ${expense_cost:>12,.2f}")
         console.print(f"Total Costs:           ${total_cost:>12,.2f}\n")
         
         profit_color = "green" if profit >= 0 else "red"
