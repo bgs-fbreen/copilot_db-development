@@ -8,6 +8,9 @@ import sys
 
 console = Console()
 
+# Constants
+MENU_WIDTH = 51
+
 
 def clear_screen():
     """Clear the terminal screen using Rich"""
@@ -22,9 +25,9 @@ def pause():
 
 def show_header(title):
     """Show a formatted header"""
-    console.print(f"\n[bold cyan]{'═' * 51}[/bold cyan]")
+    console.print(f"\n[bold cyan]{'═' * MENU_WIDTH}[/bold cyan]")
     console.print(f"[bold cyan]   {title}[/bold cyan]")
-    console.print(f"[bold cyan]{'═' * 51}[/bold cyan]\n")
+    console.print(f"[bold cyan]{'═' * MENU_WIDTH}[/bold cyan]\n")
 
 
 def run_command(command_func, args=None):
@@ -60,7 +63,7 @@ def show_main_menu():
     console.print()
     console.print("   v) Version Info")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_projects_menu():
@@ -77,7 +80,7 @@ def show_projects_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_clients_menu():
@@ -91,7 +94,7 @@ def show_clients_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_timesheets_menu():
@@ -104,7 +107,7 @@ def show_timesheets_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_invoices_menu():
@@ -118,7 +121,7 @@ def show_invoices_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_ar_menu():
@@ -130,7 +133,7 @@ def show_ar_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_reports_menu():
@@ -142,7 +145,7 @@ def show_reports_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def show_maintenance_menu():
@@ -155,7 +158,7 @@ def show_maintenance_menu():
     console.print()
     console.print("   b) Back to Main Menu")
     console.print("   q) Quit")
-    console.print(f"\n[dim]{'─' * 51}[/dim]")
+    console.print(f"\n[dim]{'─' * MENU_WIDTH}[/dim]")
 
 
 def handle_projects_menu():
@@ -356,9 +359,28 @@ def handle_maintenance_menu():
             pause()
 
 
+def confirm_quit():
+    """Ask user to confirm quit and exit if confirmed"""
+    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
+        clear_screen()
+        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
+        sys.exit(0)
+
+
 def run_interactive_menu():
     """Main interactive menu loop"""
     from copilot.commands import version
+    
+    # Map menu choices to their handler functions
+    menu_handlers = {
+        '1': handle_projects_menu,
+        '2': handle_clients_menu,
+        '3': handle_timesheets_menu,
+        '4': handle_invoices_menu,
+        '5': handle_ar_menu,
+        '6': handle_reports_menu,
+        '7': handle_maintenance_menu,
+    }
     
     try:
         while True:
@@ -366,62 +388,14 @@ def run_interactive_menu():
             choice = Prompt.ask("Select option").strip().lower()
             
             if choice == 'q':
-                if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                    clear_screen()
-                    console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                    sys.exit(0)
+                confirm_quit()
             elif choice == 'v':
                 run_command(version, [])
                 pause()
-            elif choice == '1':
-                result = handle_projects_menu()
+            elif choice in menu_handlers:
+                result = menu_handlers[choice]()
                 if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
-            elif choice == '2':
-                result = handle_clients_menu()
-                if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
-            elif choice == '3':
-                result = handle_timesheets_menu()
-                if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
-            elif choice == '4':
-                result = handle_invoices_menu()
-                if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
-            elif choice == '5':
-                result = handle_ar_menu()
-                if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
-            elif choice == '6':
-                result = handle_reports_menu()
-                if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
-            elif choice == '7':
-                result = handle_maintenance_menu()
-                if result == 'quit':
-                    if Confirm.ask("\n[yellow]Are you sure you want to quit?[/yellow]", default=False):
-                        clear_screen()
-                        console.print("\n[cyan]Thank you for using Copilot![/cyan]\n")
-                        sys.exit(0)
+                    confirm_quit()
             else:
                 console.print("[yellow]Invalid option, please try again[/yellow]")
                 pause()
