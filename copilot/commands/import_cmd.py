@@ -333,7 +333,6 @@ def import_csv(file, account, dry_run):
                       trans['payee'], trans['memo'], trans['amount']))
             
             # Log the import
-            import_id = f"{account}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             cur.execute("""
                 INSERT INTO acc.import_log
                     (account_code, file_name, file_hash, records_imported, 
@@ -361,26 +360,43 @@ def import_list(account):
     console.print("[bold cyan]   Import History[/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
     
-    where_clause = "WHERE account_code = %s" if account else ""
-    params = (account,) if account else None
-    
-    imports = execute_query(f"""
-        SELECT 
-            il.id,
-            il.account_code,
-            ba.name as account_name,
-            il.import_date,
-            il.file_name,
-            il.records_imported,
-            il.records_skipped,
-            il.date_range_start,
-            il.date_range_end
-        FROM acc.import_log il
-        JOIN acc.bank_account ba ON ba.code = il.account_code
-        {where_clause}
-        ORDER BY il.import_date DESC
-        LIMIT 50
-    """, params)
+    if account:
+        query = """
+            SELECT 
+                il.id,
+                il.account_code,
+                ba.name as account_name,
+                il.import_date,
+                il.file_name,
+                il.records_imported,
+                il.records_skipped,
+                il.date_range_start,
+                il.date_range_end
+            FROM acc.import_log il
+            JOIN acc.bank_account ba ON ba.code = il.account_code
+            WHERE il.account_code = %s
+            ORDER BY il.import_date DESC
+            LIMIT 50
+        """
+        imports = execute_query(query, (account,))
+    else:
+        query = """
+            SELECT 
+                il.id,
+                il.account_code,
+                ba.name as account_name,
+                il.import_date,
+                il.file_name,
+                il.records_imported,
+                il.records_skipped,
+                il.date_range_start,
+                il.date_range_end
+            FROM acc.import_log il
+            JOIN acc.bank_account ba ON ba.code = il.account_code
+            ORDER BY il.import_date DESC
+            LIMIT 50
+        """
+        imports = execute_query(query)
     
     if not imports:
         console.print("[yellow]No imports found[/yellow]")
@@ -424,15 +440,21 @@ def import_status(account):
     console.print("[bold cyan]   Uncategorized Transactions[/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
     
-    where_clause = "AND account_code = %s" if account else ""
-    params = (account,) if account else None
-    
-    transactions = execute_query(f"""
-        SELECT * FROM acc.vw_uncategorized
-        {where_clause}
-        ORDER BY trans_date DESC
-        LIMIT 100
-    """, params)
+    if account:
+        query = """
+            SELECT * FROM acc.vw_uncategorized
+            WHERE account_code = %s
+            ORDER BY trans_date DESC
+            LIMIT 100
+        """
+        transactions = execute_query(query, (account,))
+    else:
+        query = """
+            SELECT * FROM acc.vw_uncategorized
+            ORDER BY trans_date DESC
+            LIMIT 100
+        """
+        transactions = execute_query(query)
     
     if not transactions:
         console.print("[green]All transactions are categorized![/green]")

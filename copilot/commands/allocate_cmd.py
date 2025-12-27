@@ -58,15 +58,21 @@ def allocate_interactive(account, limit):
     console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
     
     # Get uncategorized transactions
-    where_clause = "AND account_code = %s" if account else ""
-    params = (account,) if account else None
-    
-    transactions = execute_query(f"""
-        SELECT * FROM acc.vw_uncategorized
-        {where_clause}
-        ORDER BY trans_date DESC
-        LIMIT %s
-    """, params + (limit,) if params else (limit,))
+    if account:
+        query = """
+            SELECT * FROM acc.vw_uncategorized
+            WHERE account_code = %s
+            ORDER BY trans_date DESC
+            LIMIT %s
+        """
+        transactions = execute_query(query, (account, limit))
+    else:
+        query = """
+            SELECT * FROM acc.vw_uncategorized
+            ORDER BY trans_date DESC
+            LIMIT %s
+        """
+        transactions = execute_query(query, (limit,))
     
     if not transactions:
         console.print("[green]All transactions are categorized![/green]\n")
@@ -230,14 +236,19 @@ def allocate_auto(account, min_confidence, dry_run):
     console.print(f"[bold]Minimum confidence:[/bold] {min_confidence}%\n")
     
     # Get uncategorized transactions
-    where_clause = "AND account_code = %s" if account else ""
-    params = (account,) if account else None
-    
-    transactions = execute_query(f"""
-        SELECT * FROM acc.vw_uncategorized
-        {where_clause}
-        ORDER BY trans_date DESC
-    """, params)
+    if account:
+        query = """
+            SELECT * FROM acc.vw_uncategorized
+            WHERE account_code = %s
+            ORDER BY trans_date DESC
+        """
+        transactions = execute_query(query, (account,))
+    else:
+        query = """
+            SELECT * FROM acc.vw_uncategorized
+            ORDER BY trans_date DESC
+        """
+        transactions = execute_query(query)
     
     if not transactions:
         console.print("[green]All transactions are categorized![/green]\n")
@@ -347,29 +358,34 @@ def allocate_list(account, category, entity, month):
     console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
     
     # Build WHERE clause
-    where_clauses = ["category_id IS NOT NULL"]
+    where_clauses = ["t.category_id IS NOT NULL"]
     params = []
     
     if account:
-        where_clauses.append("account_code = %s")
+        where_clauses.append("t.account_code = %s")
         params.append(account)
     
     if category:
-        where_clauses.append("EXISTS (SELECT 1 FROM acc.category WHERE id = t.category_id AND code = %s)")
+        where_clauses.append("c.code = %s")
         params.append(category)
     
     if entity:
-        where_clauses.append("entity = %s")
+        where_clauses.append("t.entity = %s")
         params.append(entity)
     
     if month:
-        where_clauses.append("DATE_TRUNC('month', trans_date) = %s::date")
+        # Validate month format
+        import re
+        if not re.match(r'^\d{4}-\d{2}$', month):
+            console.print("[red]Invalid month format. Use YYYY-MM (e.g., 2024-01)[/red]\n")
+            return
+        where_clauses.append("DATE_TRUNC('month', t.trans_date) = %s::date")
         params.append(f"{month}-01")
     
     where_clause = "WHERE " + " AND ".join(where_clauses)
     
     # Get allocated transactions
-    transactions = execute_query(f"""
+    query = f"""
         SELECT 
             t.id,
             t.account_code,
@@ -384,7 +400,8 @@ def allocate_list(account, category, entity, month):
         {where_clause}
         ORDER BY t.trans_date DESC
         LIMIT 100
-    """, tuple(params) if params else None)
+    """
+    transactions = execute_query(query, tuple(params) if params else None)
     
     if not transactions:
         console.print("[yellow]No allocated transactions found[/yellow]\n")
