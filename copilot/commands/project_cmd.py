@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Confirm, Prompt
 from copilot.db import execute_query, get_connection
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import os
 from pathlib import Path
 import xlsxwriter
@@ -573,6 +573,105 @@ def show_project_actual(project_code):
     console.print(f"   [{pct_color}]Budget Used:         {budget_used_pct:>12.1f}%[/{pct_color}]")
     
     console.print(f"\n[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
+    
+    # Get invoices for this project
+    invoices = execute_query("""
+        SELECT 
+            i.invoice_code,
+            i.invoice_number,
+            i.invoice_date,
+            i.due_date,
+            i.amount,
+            i.paid_amount,
+            i.status,
+            i.payment_date
+        FROM bgs.invoice i
+        WHERE i.project_code = %s
+        ORDER BY i.invoice_number
+    """, [project_code])
+    
+    if invoices:
+        today = date.today()
+        
+        console.print(f"[bold cyan]═══════════════════════════════════════════════════[/bold cyan]")
+        console.print(f"[bold cyan]   Invoice Status[/bold cyan]")
+        console.print(f"[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
+        
+        inv_table = Table(show_header=True, header_style="bold magenta")
+        inv_table.add_column("Inv#", style="cyan")
+        inv_table.add_column("Invoice Date", style="white")
+        inv_table.add_column("Due Date", style="white")
+        inv_table.add_column("Amount", justify="right")
+        inv_table.add_column("Paid", justify="right", style="green")
+        inv_table.add_column("Balance", justify="right")
+        inv_table.add_column("Status", justify="center")
+        inv_table.add_column("Days", justify="right")
+        
+        total_invoiced = 0
+        total_paid = 0
+        
+        for inv in invoices:
+            amount = float(inv['amount'] or 0)
+            paid = float(inv['paid_amount'] or 0)
+            balance = amount - paid
+            total_invoiced += amount
+            total_paid += paid
+            
+            invoice_date = inv['invoice_date']
+            due_date = inv['due_date'] or (invoice_date + timedelta(days=30))
+            
+            # Determine status and color
+            status = inv['status'] or 'draft'
+            if status == 'paid':
+                status_color = "green"
+                days_str = "-"
+            else:
+                days_outstanding = (today - invoice_date).days
+                days_str = str(days_outstanding)
+                
+                # Check if overdue
+                if today > due_date and status != 'paid':
+                    status = "overdue"
+                    status_color = "red"
+                elif status == 'pending':
+                    status_color = "yellow"
+                else:
+                    status_color = "dim"
+                
+                # Color code days
+                if days_outstanding > 90:
+                    days_str = f"[red]{days_outstanding}[/red]"
+                elif days_outstanding > 60:
+                    days_str = f"[yellow]{days_outstanding}[/yellow]"
+                elif days_outstanding > 30:
+                    days_str = f"[yellow]{days_outstanding}[/yellow]"
+            
+            # Balance color
+            balance_color = "white" if balance == 0 else "yellow"
+            
+            inv_table.add_row(
+                f"{inv['invoice_number']:04d}",
+                invoice_date.strftime('%Y-%m-%d'),
+                due_date.strftime('%Y-%m-%d'),
+                f"${amount:,.2f}",
+                f"${paid:,.2f}",
+                f"[{balance_color}]${balance:,.2f}[/{balance_color}]",
+                f"[{status_color}]{status}[/{status_color}]",
+                days_str
+            )
+        
+        console.print(inv_table)
+        
+        total_outstanding = total_invoiced - total_paid
+        outstanding_color = "green" if total_outstanding == 0 else "yellow"
+        
+        console.print(f"\n   Total Invoiced:     ${total_invoiced:>12,.2f}")
+        console.print(f"   Total Paid:         ${total_paid:>12,.2f}")
+        console.print(f"   [{outstanding_color}]Total Outstanding:  ${total_outstanding:>12,.2f}[/{outstanding_color}]")
+        
+        console.print(f"\n[bold cyan]═══════════════════════════════════════════════════[/bold cyan]\n")
+    else:
+        console.print(f"[dim]No invoices found for this project.[/dim]\n")
 
 
 @project.command('actual')
