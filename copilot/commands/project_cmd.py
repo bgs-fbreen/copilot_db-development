@@ -618,15 +618,20 @@ def show_project_actual(project_code):
                 continue
             
             amount = float(inv['amount'] or 0)
-            paid = float(inv['paid_amount'] or 0)
-            balance = amount - paid
+            status = inv['status'] or 'draft'
+            
+            # If status is 'paid', treat as fully paid regardless of paid_amount field
+            if status == 'paid':
+                paid = amount
+                balance = 0
+            else:
+                paid = float(inv['paid_amount'] or 0)
+                balance = amount - paid
+            
             total_invoiced += amount
             total_paid += paid
                 
             due_date = inv['due_date'] or (invoice_date + timedelta(days=DEFAULT_INVOICE_DUE_DAYS))
-            
-            # Determine status and color
-            status = inv['status'] or 'draft'
             
             # Safely convert invoice_number to int
             try:
