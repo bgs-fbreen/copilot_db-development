@@ -644,7 +644,15 @@ def show_project_actual(project_code):
                 if days_outstanding < 0:
                     days_str = "0"
                 else:
-                    days_str = str(days_outstanding)
+                    # Color code days (only for positive values)
+                    if days_outstanding > 90:
+                        days_str = f"[red]{days_outstanding}[/red]"
+                    elif days_outstanding > 60:
+                        days_str = f"[bright_yellow]{days_outstanding}[/bright_yellow]"
+                    elif days_outstanding > 30:
+                        days_str = f"[yellow]{days_outstanding}[/yellow]"
+                    else:
+                        days_str = str(days_outstanding)
                 
                 # Check if overdue
                 if today > due_date and status != 'paid':
@@ -654,14 +662,6 @@ def show_project_actual(project_code):
                     status_color = "yellow"
                 else:
                     status_color = "dim"
-                
-                # Color code days (only for positive values)
-                if days_outstanding > 90:
-                    days_str = f"[red]{days_outstanding}[/red]"
-                elif days_outstanding > 60:
-                    days_str = f"[bright_yellow]{days_outstanding}[/bright_yellow]"
-                elif days_outstanding > 30:
-                    days_str = f"[yellow]{days_outstanding}[/yellow]"
             
             # Balance color
             balance_color = "white" if balance == 0 else "yellow"
