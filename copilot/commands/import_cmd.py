@@ -316,72 +316,101 @@ def import_csv(file, account, dry_run):
     console.print(table)
     console.print()
     
-    # Count actual new vs duplicates
+    # Count actual new vs duplicates and calculate statistics
     imported_count = 0
     skipped_count = 0
+    new_transactions = []
     for trans in transactions:
         if is_duplicate_transaction(account, trans['trans_date'], trans['amount'], trans['payee']):
             skipped_count += 1
         else:
             imported_count += 1
+            new_transactions.append(trans)
             if not date_range_start or trans['trans_date'] < date_range_start:
                 date_range_start = trans['trans_date']
             if not date_range_end or trans['trans_date'] > date_range_end:
                 date_range_end = trans['trans_date']
+    
+    # Calculate detailed statistics for new transactions
+    if new_transactions:
+        amounts = [t['amount'] for t in new_transactions]
+        debits = [a for a in amounts if a < 0]
+        credits = [a for a in amounts if a > 0]
+        dates = [t['trans_date'] for t in new_transactions]
+        
+        date_min = min(dates) if dates else None
+        date_max = max(dates) if dates else None
+        date_span_days = (date_max - date_min).days if date_min and date_max else 0
+        
+        total_count = len(new_transactions)
+        debit_count = len(debits)
+        credit_count = len(credits)
+        
+        debit_total = abs(sum(debits)) if debits else 0
+        debit_largest = abs(min(debits)) if debits else 0
+        debit_smallest = abs(max(debits)) if debits else 0
+        debit_average = debit_total / debit_count if debit_count > 0 else 0
+        
+        credit_total = sum(credits) if credits else 0
+        credit_largest = max(credits) if credits else 0
+        credit_smallest = min(credits) if credits else 0
+        credit_average = credit_total / credit_count if credit_count > 0 else 0
+        
+        net_flow = sum(amounts)
+    else:
+        # Default values if no new transactions
+        date_span_days = 0
+        total_count = 0
+        debit_count = 0
+        credit_count = 0
+        debit_total = 0
+        debit_largest = 0
+        debit_smallest = 0
+        debit_average = 0
+        credit_total = 0
+        credit_largest = 0
+        credit_smallest = 0
+        credit_average = 0
+        net_flow = 0
     
     console.print(f"[bold]Summary:[/bold]")
     console.print(f"  New transactions: [green]{imported_count}[/green]")
     console.print(f"  Duplicates (skipped): [yellow]{skipped_count}[/yellow]\n")
     
     if dry_run:
-        # Calculate detailed statistics for dry-run
-        new_transactions = [t for t in transactions if not is_duplicate_transaction(account, t['trans_date'], t['amount'], t['payee'])]
-        
+        # Display detailed statistics for dry-run (already calculated above)
         if new_transactions:
-            # Date range
-            dates = [t['trans_date'] for t in new_transactions]
-            earliest_date = min(dates)
-            latest_date = max(dates)
-            span_days = (latest_date - earliest_date).days
-            
-            # Separate debits and credits
-            debits = [t['amount'] for t in new_transactions if t['amount'] < 0]
-            credits = [t['amount'] for t in new_transactions if t['amount'] > 0]
-            
-            # Calculate net flow
-            net_flow = sum(t['amount'] for t in new_transactions)
-            
             console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]")
             console.print("[bold cyan]   Detailed Statistics[/bold cyan]")
             console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
             
             # Date Range
             console.print("[bold]Date Range:[/bold]")
-            console.print(f"  From: {earliest_date.strftime('%Y-%m-%d')}")
-            console.print(f"  To:   {latest_date.strftime('%Y-%m-%d')}")
-            console.print(f"  Span: {span_days} days\n")
+            console.print(f"  From: {date_range_start.strftime('%Y-%m-%d')}")
+            console.print(f"  To:   {date_range_end.strftime('%Y-%m-%d')}")
+            console.print(f"  Span: {date_span_days} days\n")
             
             # Transaction Counts
             console.print("[bold]Transaction Counts:[/bold]")
-            console.print(f"  Total:   {len(new_transactions)}")
-            console.print(f"  Debits:  {len(debits)}")
-            console.print(f"  Credits: {len(credits)}\n")
+            console.print(f"  Total:   {total_count}")
+            console.print(f"  Debits:  {debit_count}")
+            console.print(f"  Credits: {credit_count}\n")
             
             # Debits (Outflows)
-            if debits:
+            if debit_count > 0:
                 console.print("[bold]Debits (Outflows):[/bold]")
-                console.print(f"  Total:    [red]-${abs(sum(debits)):,.2f}[/red]")
-                console.print(f"  Largest:  [red]-${abs(min(debits)):,.2f}[/red]")
-                console.print(f"  Smallest: [red]-${abs(max(debits)):,.2f}[/red]")
-                console.print(f"  Average:  [red]-${abs(sum(debits) / len(debits)):,.2f}[/red]\n")
+                console.print(f"  Total:    [red]-${debit_total:,.2f}[/red]")
+                console.print(f"  Largest:  [red]-${debit_largest:,.2f}[/red]")
+                console.print(f"  Smallest: [red]-${debit_smallest:,.2f}[/red]")
+                console.print(f"  Average:  [red]-${debit_average:,.2f}[/red]\n")
             
             # Credits (Inflows)
-            if credits:
+            if credit_count > 0:
                 console.print("[bold]Credits (Inflows):[/bold]")
-                console.print(f"  Total:    [green]${sum(credits):,.2f}[/green]")
-                console.print(f"  Largest:  [green]${max(credits):,.2f}[/green]")
-                console.print(f"  Smallest: [green]${min(credits):,.2f}[/green]")
-                console.print(f"  Average:  [green]${sum(credits) / len(credits):,.2f}[/green]\n")
+                console.print(f"  Total:    [green]${credit_total:,.2f}[/green]")
+                console.print(f"  Largest:  [green]${credit_largest:,.2f}[/green]")
+                console.print(f"  Smallest: [green]${credit_smallest:,.2f}[/green]")
+                console.print(f"  Average:  [green]${credit_average:,.2f}[/green]\n")
             
             # Net Flow
             net_color = "green" if net_flow >= 0 else "red"
@@ -423,11 +452,19 @@ def import_csv(file, account, dry_run):
             # Log the import
             cur.execute("""
                 INSERT INTO acc.import_log
-                    (account_code, file_name, file_hash, records_imported, 
-                     records_skipped, date_range_start, date_range_end)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (account, os.path.basename(file), file_hash, imported_count,
-                  skipped_count, date_range_start, date_range_end))
+                    (account_code, file_name, file_hash, records_imported, records_skipped,
+                     date_range_start, date_range_end, date_span_days,
+                     total_count, debit_count, credit_count,
+                     debit_total, debit_largest, debit_smallest, debit_average,
+                     credit_total, credit_largest, credit_smallest, credit_average,
+                     net_flow)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (account, os.path.basename(file), file_hash, imported_count, skipped_count,
+                  date_range_start, date_range_end, date_span_days,
+                  total_count, debit_count, credit_count,
+                  debit_total, debit_largest, debit_smallest, debit_average,
+                  credit_total, credit_largest, credit_smallest, credit_average,
+                  net_flow))
             
             conn.commit()
             console.print(f"\n[bold green]✓ Successfully imported {imported_count} transactions![/bold green]\n")
