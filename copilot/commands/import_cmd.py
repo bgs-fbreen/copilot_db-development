@@ -159,7 +159,14 @@ def import_cmd():
 @click.option('--account', '-a', required=True, help='Bank account code')
 @click.option('--dry-run', is_flag=True, help='Preview import without saving')
 def import_csv(file, account, dry_run):
-    """Import transactions from CSV file"""
+    """Import transactions from CSV file.
+    
+    Usage: copilot import csv <file> --account <account_code> [--dry-run]
+    
+    Examples:
+        copilot import csv ~/Downloads/statement.csv --account bgs:account --dry-run
+        copilot import csv ~/Downloads/statement.csv --account bgs:account
+    """
     
     clear_screen()
     console.print("\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
@@ -172,11 +179,21 @@ def import_csv(file, account, dry_run):
     """, (account,))
     
     if not accounts:
-        console.print(f"[red]Error: Account '{account}' not found[/red]")
-        console.print("\nAvailable accounts:")
+        console.print(f"[red]Error: Account '{account}' not found[/red]\n")
+        console.print("[bold]Available accounts:[/bold]")
         all_accounts = execute_query("SELECT code, name FROM acc.bank_account ORDER BY code")
+        
+        # Find max code length for alignment
+        max_code_len = max(len(acc['code']) for acc in all_accounts) if all_accounts else 0
+        
         for acc in all_accounts:
-            console.print(f"  {acc['code']}: {acc['name']}")
+            console.print(f"  [cyan]{acc['code']:<{max_code_len}}[/cyan]  {acc['name']}")
+        
+        console.print("\n[bold]Example usage:[/bold]")
+        if all_accounts:
+            example_account = all_accounts[0]['code']
+            console.print(f"  copilot import csv ~/Downloads/statement.csv --account {example_account} --dry-run")
+            console.print(f"  copilot import csv ~/Downloads/statement.csv --account {example_account}")
         return
     
     console.print(f"[bold]Account:[/bold] {accounts[0]['name']} ({account})")
@@ -316,6 +333,61 @@ def import_csv(file, account, dry_run):
     console.print(f"  Duplicates (skipped): [yellow]{skipped_count}[/yellow]\n")
     
     if dry_run:
+        # Calculate detailed statistics for dry-run
+        new_transactions = [t for t in transactions if not is_duplicate_transaction(account, t['trans_date'], t['amount'], t['payee'])]
+        
+        if new_transactions:
+            # Date range
+            dates = [t['trans_date'] for t in new_transactions]
+            earliest_date = min(dates)
+            latest_date = max(dates)
+            span_days = (latest_date - earliest_date).days
+            
+            # Separate debits and credits
+            debits = [t['amount'] for t in new_transactions if t['amount'] < 0]
+            credits = [t['amount'] for t in new_transactions if t['amount'] > 0]
+            
+            # Calculate net flow
+            net_flow = sum(t['amount'] for t in new_transactions)
+            
+            console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]")
+            console.print("[bold cyan]   Detailed Statistics[/bold cyan]")
+            console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
+            
+            # Date Range
+            console.print("[bold]Date Range:[/bold]")
+            console.print(f"  From: {earliest_date.strftime('%Y-%m-%d')}")
+            console.print(f"  To:   {latest_date.strftime('%Y-%m-%d')}")
+            console.print(f"  Span: {span_days} days\n")
+            
+            # Transaction Counts
+            console.print("[bold]Transaction Counts:[/bold]")
+            console.print(f"  Total:   {len(new_transactions)}")
+            console.print(f"  Debits:  {len(debits)}")
+            console.print(f"  Credits: {len(credits)}\n")
+            
+            # Debits (Outflows)
+            if debits:
+                console.print("[bold]Debits (Outflows):[/bold]")
+                console.print(f"  Total:    [red]-${abs(sum(debits)):,.2f}[/red]")
+                console.print(f"  Largest:  [red]-${abs(min(debits)):,.2f}[/red]")
+                console.print(f"  Smallest: [red]-${abs(max(debits)):,.2f}[/red]")
+                console.print(f"  Average:  [red]-${abs(sum(debits) / len(debits)):,.2f}[/red]\n")
+            
+            # Credits (Inflows)
+            if credits:
+                console.print("[bold]Credits (Inflows):[/bold]")
+                console.print(f"  Total:    [green]${sum(credits):,.2f}[/green]")
+                console.print(f"  Largest:  [green]${max(credits):,.2f}[/green]")
+                console.print(f"  Smallest: [green]${min(credits):,.2f}[/green]")
+                console.print(f"  Average:  [green]${sum(credits) / len(credits):,.2f}[/green]\n")
+            
+            # Net Flow
+            net_color = "green" if net_flow >= 0 else "red"
+            net_prefix = "+" if net_flow >= 0 else "-"
+            console.print("[bold]Net Flow:[/bold]")
+            console.print(f"  [{net_color}]{net_prefix}${abs(net_flow):,.2f}[/{net_color}]\n")
+        
         console.print("[yellow]Dry run - no changes made[/yellow]")
         return
     
