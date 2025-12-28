@@ -100,10 +100,11 @@ def detect_csv_format(file_path):
         payee_patterns = ['payee', 'description', 'merchant', 'name', 'details']
         memo_patterns = ['memo', 'note', 'description', 'details', 'comment']
         amount_patterns = ['amount', 'transaction amount', 'value']
-        debit_patterns = ['debit', 'withdrawal', 'payments', 'debits']
-        credit_patterns = ['credit', 'deposit', 'deposits', 'credits']
+        debit_patterns = ['debit amount', 'debit', 'withdrawal', 'withdrawals', 'debit_amount', 'payments', 'debits']
+        credit_patterns = ['credit amount', 'credit', 'deposit', 'deposits', 'credit_amount', 'credits']
         
         # Match headers to patterns
+        # Check debit/credit patterns BEFORE amount patterns to avoid confusion
         for i, header in enumerate(headers_lower):
             if any(pattern in header for pattern in date_patterns) and not mapping['date']:
                 mapping['date'] = headers[i]
@@ -113,12 +114,12 @@ def detect_csv_format(file_path):
                 mapping['payee'] = headers[i]
             elif any(pattern in header for pattern in memo_patterns) and not mapping['memo']:
                 mapping['memo'] = headers[i]
-            elif any(pattern in header for pattern in amount_patterns) and not mapping['amount']:
-                mapping['amount'] = headers[i]
             elif any(pattern in header for pattern in debit_patterns):
                 mapping['debit'] = headers[i]
             elif any(pattern in header for pattern in credit_patterns):
                 mapping['credit'] = headers[i]
+            elif any(pattern in header for pattern in amount_patterns) and not mapping['amount']:
+                mapping['amount'] = headers[i]
         
         # If no payee found but memo exists, use memo as payee
         if not mapping['payee'] and mapping['memo']:
