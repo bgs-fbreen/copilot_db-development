@@ -369,24 +369,24 @@ def import_csv(file, account, dry_run):
             # Debits (Outflows)
             if debits:
                 console.print("[bold]Debits (Outflows):[/bold]")
-                console.print(f"  Total:   [red]-${abs(sum(debits)):,.2f}[/red]")
-                console.print(f"  Largest: [red]-${abs(min(debits)):,.2f}[/red]")
-                console.print(f"  Smallest:[red]-${abs(max(debits)):,.2f}[/red]")
-                console.print(f"  Average: [red]-${abs(sum(debits) / len(debits)):,.2f}[/red]\n")
+                console.print(f"  Total:    [red]-${abs(sum(debits)):,.2f}[/red]")
+                console.print(f"  Largest:  [red]-${abs(min(debits)):,.2f}[/red]")
+                console.print(f"  Smallest: [red]-${abs(max(debits)):,.2f}[/red]")
+                console.print(f"  Average:  [red]-${abs(sum(debits) / len(debits)):,.2f}[/red]\n")
             
             # Credits (Inflows)
             if credits:
                 console.print("[bold]Credits (Inflows):[/bold]")
-                console.print(f"  Total:   [green]${sum(credits):,.2f}[/green]")
-                console.print(f"  Largest: [green]${max(credits):,.2f}[/green]")
-                console.print(f"  Smallest:[green]${min(credits):,.2f}[/green]")
-                console.print(f"  Average: [green]${sum(credits) / len(credits):,.2f}[/green]\n")
+                console.print(f"  Total:    [green]${sum(credits):,.2f}[/green]")
+                console.print(f"  Largest:  [green]${max(credits):,.2f}[/green]")
+                console.print(f"  Smallest: [green]${min(credits):,.2f}[/green]")
+                console.print(f"  Average:  [green]${sum(credits) / len(credits):,.2f}[/green]\n")
             
             # Net Flow
             net_color = "green" if net_flow >= 0 else "red"
-            net_symbol = "" if net_flow < 0 else ""
+            net_prefix = "+" if net_flow >= 0 else "-"
             console.print("[bold]Net Flow:[/bold]")
-            console.print(f"  [{net_color}]{net_symbol}${abs(net_flow):,.2f}[/{net_color}]\n")
+            console.print(f"  [{net_color}]{net_prefix}${abs(net_flow):,.2f}[/{net_color}]\n")
         
         console.print("[yellow]Dry run - no changes made[/yellow]")
         return
