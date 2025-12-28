@@ -261,6 +261,51 @@ def import_csv(file, account, dry_run):
     entity = extract_entity(account)
     console.print(f"[bold]Entity:[/bold] {entity}\n")
     
+    # Add summary statistics
+    dates = [t['trans_date'] for t in transactions if t['trans_date']]
+    amounts = [t['amount'] for t in transactions]
+    debits = [a for a in amounts if a < 0]
+    credits = [a for a in amounts if a > 0]
+    
+    date_min = min(dates) if dates else None
+    date_max = max(dates) if dates else None
+    
+    console.print(f"\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
+    console.print(f"[bold cyan]   Import Summary[/bold cyan]")
+    console.print(f"[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
+    
+    console.print(f"[bold]Date Range:[/bold]")
+    console.print(f"  From:  {date_min}")
+    console.print(f"  To:    {date_max}")
+    console.print(f"  Span:  {(date_max - date_min).days} days\n")
+    
+    console.print(f"[bold]Transaction Counts:[/bold]")
+    console.print(f"  Total:   {len(transactions)}")
+    console.print(f"  Debits:  {len(debits)}")
+    console.print(f"  Credits: {len(credits)}\n")
+    
+    console.print(f"[bold]Debits (Outflows):[/bold]")
+    if debits:
+        console.print(f"  Total:    [red]${abs(sum(debits)):,.2f}[/red]")
+        console.print(f"  Largest:  [red]${abs(min(debits)):,.2f}[/red]")
+        console.print(f"  Smallest: [red]${abs(max(debits)):,.2f}[/red]")
+        console.print(f"  Average:  [red]${abs(sum(debits)/len(debits)):,.2f}[/red]\n")
+    else:
+        console.print(f"  None\n")
+    
+    console.print(f"[bold]Credits (Inflows):[/bold]")
+    if credits:
+        console.print(f"  Total:    [green]${sum(credits):,.2f}[/green]")
+        console.print(f"  Largest:  [green]${max(credits):,.2f}[/green]")
+        console.print(f"  Smallest: [green]${min(credits):,.2f}[/green]")
+        console.print(f"  Average:  [green]${sum(credits)/len(credits):,.2f}[/green]\n")
+    else:
+        console.print(f"  None\n")
+    
+    net_flow = sum(amounts)
+    net_color = "green" if net_flow >= 0 else "red"
+    console.print(f"[bold]Net Flow:[/bold] [{net_color}]${net_flow:,.2f}[/{net_color}]\n")
+    
     # Show preview
     console.print(f"[bold]Found {len(transactions)} transactions[/bold]\n")
     
