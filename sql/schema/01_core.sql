@@ -105,10 +105,36 @@ CREATE TABLE acc.import_log (
     records_skipped INTEGER,
     date_range_start DATE,
     date_range_end DATE,
+    date_span_days INTEGER,
+    total_count INTEGER,
+    debit_count INTEGER,
+    credit_count INTEGER,
+    debit_total NUMERIC(12,2),
+    debit_largest NUMERIC(12,2),
+    debit_smallest NUMERIC(12,2),
+    debit_average NUMERIC(12,2),
+    credit_total NUMERIC(12,2),
+    credit_largest NUMERIC(12,2),
+    credit_smallest NUMERIC(12,2),
+    credit_average NUMERIC(12,2),
+    net_flow NUMERIC(12,2),
     notes TEXT
 );
 
 COMMENT ON TABLE acc.import_log IS 'Track bank statement imports to prevent duplicates';
+COMMENT ON COLUMN acc.import_log.date_span_days IS 'Number of days between earliest and latest transaction in the import';
+COMMENT ON COLUMN acc.import_log.total_count IS 'Total number of transactions imported (excluding duplicates)';
+COMMENT ON COLUMN acc.import_log.debit_count IS 'Number of debit transactions (negative amounts)';
+COMMENT ON COLUMN acc.import_log.credit_count IS 'Number of credit transactions (positive amounts)';
+COMMENT ON COLUMN acc.import_log.debit_total IS 'Total absolute value of all debits';
+COMMENT ON COLUMN acc.import_log.debit_largest IS 'Largest single debit (absolute value)';
+COMMENT ON COLUMN acc.import_log.debit_smallest IS 'Smallest single debit (absolute value)';
+COMMENT ON COLUMN acc.import_log.debit_average IS 'Average debit amount (absolute value)';
+COMMENT ON COLUMN acc.import_log.credit_total IS 'Total of all credits';
+COMMENT ON COLUMN acc.import_log.credit_largest IS 'Largest single credit';
+COMMENT ON COLUMN acc.import_log.credit_smallest IS 'Smallest single credit';
+COMMENT ON COLUMN acc.import_log.credit_average IS 'Average credit amount';
+COMMENT ON COLUMN acc.import_log.net_flow IS 'Net cash flow (sum of all amounts where debits are negative)';
 
 CREATE INDEX idx_import_hash ON acc.import_log(file_hash);
 
