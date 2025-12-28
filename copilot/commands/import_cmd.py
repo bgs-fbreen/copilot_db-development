@@ -336,11 +336,9 @@ def import_csv(file, account, dry_run):
         amounts = [t['amount'] for t in new_transactions]
         debits = [a for a in amounts if a < 0]
         credits = [a for a in amounts if a > 0]
-        dates = [t['trans_date'] for t in new_transactions]
         
-        date_min = min(dates) if dates else None
-        date_max = max(dates) if dates else None
-        date_span_days = (date_max - date_min).days if date_min and date_max else 0
+        # Calculate date span using already-calculated date_range_start and date_range_end
+        date_span_days = (date_range_end - date_range_start).days if date_range_start and date_range_end else 0
         
         total_count = len(new_transactions)
         debit_count = len(debits)
