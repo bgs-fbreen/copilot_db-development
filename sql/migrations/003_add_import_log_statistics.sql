@@ -34,4 +34,4 @@ COMMENT ON COLUMN acc.import_log.credit_total IS 'Total of all credits';
 COMMENT ON COLUMN acc.import_log.credit_largest IS 'Largest single credit';
 COMMENT ON COLUMN acc.import_log.credit_smallest IS 'Smallest single credit';
 COMMENT ON COLUMN acc.import_log.credit_average IS 'Average credit amount';
-COMMENT ON COLUMN acc.import_log.net_flow IS 'Net cash flow (credits - debits)';
+COMMENT ON COLUMN acc.import_log.net_flow IS 'Net cash flow (sum of all amounts where debits are negative)';
