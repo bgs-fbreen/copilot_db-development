@@ -226,7 +226,7 @@ def import_csv(file, account, dry_run):
     console.print("[green]✓ CSV format detected[/green]")
     console.print(f"  Date column: {mapping['date']}")
     if mapping['payee']:
-        console.print(f"  Payee column: {mapping['payee']}")
+        console.print(f"  Description column: {mapping['payee']}")
     if mapping['amount']:
         console.print(f"  Amount column: {mapping['amount']}")
     elif mapping['debit'] and mapping['credit']:
