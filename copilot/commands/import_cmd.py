@@ -127,16 +127,23 @@ def detect_csv_format(file_path):
         return mapping
 
 
-def is_duplicate_transaction(account_code, trans_date, amount, payee):
-    """Check if transaction already exists (fuzzy match on date, amount, payee)"""
+def extract_entity(account_code):
+    """Extract entity from account code (e.g., 'bgs:checking' -> 'bgs')"""
+    if ':' in account_code:
+        return account_code.split(':')[0]
+    return account_code
+
+
+def is_duplicate_transaction(account_code, trans_date, amount, description):
+    """Check if transaction already exists (fuzzy match on date, amount, description)"""
     result = execute_query("""
         SELECT COUNT(*) as count
-        FROM acc.transaction
-        WHERE account_code = %s
-          AND trans_date = %s
+        FROM acc.bank_staging
+        WHERE source_account_code = %s
+          AND normalized_date = %s
           AND amount = %s
-          AND LOWER(payee) = LOWER(%s)
-    """, (account_code, trans_date, amount, payee or ''))
+          AND LOWER(description) = LOWER(%s)
+    """, (account_code, trans_date, amount, description or ''))
     
     return result[0]['count'] > 0
 
@@ -250,12 +257,16 @@ def import_csv(file, account, dry_run):
         console.print("[yellow]No valid transactions found in file[/yellow]")
         return
     
+    # Extract entity from account code
+    entity = extract_entity(account)
+    console.print(f"[bold]Entity:[/bold] {entity}\n")
+    
     # Show preview
     console.print(f"[bold]Found {len(transactions)} transactions[/bold]\n")
     
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Date", style="cyan")
-    table.add_column("Payee", style="white")
+    table.add_column("Description", style="white")
     table.add_column("Amount", justify="right", style="green")
     table.add_column("Status", style="yellow")
     
@@ -321,16 +332,20 @@ def import_csv(file, account, dry_run):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # Extract entity once
+            entity = extract_entity(account)
+            
             for trans in transactions:
                 if is_duplicate_transaction(account, trans['trans_date'], trans['amount'], trans['payee']):
                     continue
                 
                 cur.execute("""
-                    INSERT INTO acc.transaction
-                        (account_code, trans_date, post_date, payee, memo, amount, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'csv_import')
+                    INSERT INTO acc.bank_staging
+                        (source_account_code, normalized_date, post_date, description, memo, 
+                         amount, entity, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (account, trans['trans_date'], trans['post_date'], 
-                      trans['payee'], trans['memo'], trans['amount']))
+                      trans['payee'], trans['memo'], trans['amount'], entity, 'csv_import'))
             
             # Log the import
             cur.execute("""
@@ -433,66 +448,144 @@ def import_list(account):
 @import_cmd.command('status')
 @click.option('--account', '-a', help='Filter by account code')
 def import_status(account):
-    """Show uncategorized transactions"""
+    """Show matched and unmatched transaction counts"""
     
     clear_screen()
     console.print("\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
-    console.print("[bold cyan]   Uncategorized Transactions[/bold cyan]")
+    console.print("[bold cyan]   Bank Staging Status[/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
     
+    # Get summary counts by match status
     if account:
-        query = """
-            SELECT * FROM acc.vw_uncategorized
-            WHERE account_code = %s
-            ORDER BY trans_date DESC
-            LIMIT 100
+        summary_query = """
+            SELECT 
+                CASE 
+                    WHEN match_method = 'pattern' THEN 'Pattern Matched'
+                    WHEN match_method = 'manual' THEN 'Manually Assigned'
+                    WHEN gl_account_code = 'TODO' THEN 'Unmatched (TODO)'
+                    ELSE 'Other'
+                END as status,
+                COUNT(*) as count,
+                SUM(amount) as total_amount
+            FROM acc.bank_staging
+            WHERE source_account_code = %s
+            GROUP BY 1
+            ORDER BY 
+                CASE 
+                    WHEN gl_account_code = 'TODO' THEN 1
+                    WHEN match_method = 'pattern' THEN 2
+                    WHEN match_method = 'manual' THEN 3
+                    ELSE 4
+                END
         """
-        transactions = execute_query(query, (account,))
+        summary = execute_query(summary_query, (account,))
     else:
-        query = """
-            SELECT * FROM acc.vw_uncategorized
-            ORDER BY trans_date DESC
-            LIMIT 100
+        summary_query = """
+            SELECT 
+                CASE 
+                    WHEN match_method = 'pattern' THEN 'Pattern Matched'
+                    WHEN match_method = 'manual' THEN 'Manually Assigned'
+                    WHEN gl_account_code = 'TODO' THEN 'Unmatched (TODO)'
+                    ELSE 'Other'
+                END as status,
+                COUNT(*) as count,
+                SUM(amount) as total_amount
+            FROM acc.bank_staging
+            GROUP BY 1
+            ORDER BY 
+                CASE 
+                    WHEN gl_account_code = 'TODO' THEN 1
+                    WHEN match_method = 'pattern' THEN 2
+                    WHEN match_method = 'manual' THEN 3
+                    ELSE 4
+                END
         """
-        transactions = execute_query(query)
+        summary = execute_query(summary_query)
     
-    if not transactions:
-        console.print("[green]All transactions are categorized![/green]")
+    if not summary:
+        console.print("[yellow]No transactions found in staging[/yellow]")
         return
     
-    # Group by account
-    by_account = {}
-    for trans in transactions:
-        acc_code = trans['account_code']
-        if acc_code not in by_account:
-            by_account[acc_code] = []
-        by_account[acc_code].append(trans)
+    # Display summary table
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Status", style="white")
+    table.add_column("Count", justify="right", style="cyan")
+    table.add_column("Total Amount", justify="right", style="green")
     
-    for acc_code, acc_transactions in by_account.items():
-        console.print(f"[bold]Account: {acc_code}[/bold] ([yellow]{len(acc_transactions)} uncategorized[/yellow])\n")
+    total_count = 0
+    total_amount = 0.0
+    
+    for row in summary:
+        status_style = "red" if row['status'] == 'Unmatched (TODO)' else "white"
+        amount_str = f"${row['total_amount']:,.2f}" if row['total_amount'] >= 0 else f"-${abs(row['total_amount']):,.2f}"
+        table.add_row(
+            f"[{status_style}]{row['status']}[/{status_style}]",
+            str(row['count']),
+            amount_str
+        )
+        total_count += row['count']
+        total_amount += row['total_amount'] or 0.0
+    
+    console.print(table)
+    console.print()
+    
+    # Show overall totals
+    total_amount_str = f"${total_amount:,.2f}" if total_amount >= 0 else f"-${abs(total_amount):,.2f}"
+    console.print(f"[bold]Total Transactions:[/bold] {total_count}")
+    console.print(f"[bold]Total Amount:[/bold] {total_amount_str}\n")
+    
+    # Show unmatched transactions if any
+    if account:
+        unmatched_query = """
+            SELECT 
+                id,
+                source_account_code,
+                normalized_date,
+                description,
+                amount,
+                memo
+            FROM acc.bank_staging
+            WHERE source_account_code = %s
+              AND gl_account_code = 'TODO'
+            ORDER BY normalized_date DESC
+            LIMIT 20
+        """
+        unmatched = execute_query(unmatched_query, (account,))
+    else:
+        unmatched_query = """
+            SELECT 
+                id,
+                source_account_code,
+                normalized_date,
+                description,
+                amount,
+                memo
+            FROM acc.bank_staging
+            WHERE gl_account_code = 'TODO'
+            ORDER BY normalized_date DESC
+            LIMIT 20
+        """
+        unmatched = execute_query(unmatched_query)
+    
+    if unmatched:
+        console.print(f"[bold yellow]Unmatched Transactions (showing up to 20):[/bold yellow]\n")
         
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("ID", style="cyan", justify="right")
-        table.add_column("Date", style="white")
-        table.add_column("Payee", style="white")
-        table.add_column("Amount", justify="right", style="green")
-        table.add_column("Memo", style="dim")
+        detail_table = Table(show_header=True, header_style="bold magenta")
+        detail_table.add_column("ID", style="cyan", justify="right")
+        detail_table.add_column("Account", style="white")
+        detail_table.add_column("Date", style="white")
+        detail_table.add_column("Description", style="white")
+        detail_table.add_column("Amount", justify="right", style="green")
         
-        for trans in acc_transactions[:20]:  # Show first 20
+        for trans in unmatched:
             amount_str = f"${trans['amount']:,.2f}" if trans['amount'] >= 0 else f"-${abs(trans['amount']):,.2f}"
-            table.add_row(
+            detail_table.add_row(
                 str(trans['id']),
-                trans['trans_date'].strftime('%Y-%m-%d'),
-                (trans['payee'] or '')[:30],
-                amount_str,
-                (trans['memo'] or '')[:40]
+                trans['source_account_code'],
+                trans['normalized_date'].strftime('%Y-%m-%d'),
+                (trans['description'] or '')[:40],
+                amount_str
             )
         
-        if len(acc_transactions) > 20:
-            console.print(table)
-            console.print(f"[dim]... and {len(acc_transactions) - 20} more[/dim]\n")
-        else:
-            console.print(table)
-            console.print()
-    
-    console.print(f"\n[bold]Total uncategorized: {len(transactions)}[/bold]\n")
+        console.print(detail_table)
+        console.print()
