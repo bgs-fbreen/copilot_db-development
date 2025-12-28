@@ -100,8 +100,8 @@ def detect_csv_format(file_path):
         payee_patterns = ['payee', 'description', 'merchant', 'name', 'details']
         memo_patterns = ['memo', 'note', 'description', 'details', 'comment']
         amount_patterns = ['amount', 'transaction amount', 'value']
-        debit_patterns = ['debit amount', 'debit', 'withdrawal', 'withdrawals', 'debit_amount', 'payments', 'debits']
-        credit_patterns = ['credit amount', 'credit', 'deposit', 'deposits', 'credit_amount', 'credits']
+        debit_patterns = ['debit amount', 'debit_amount', 'debit', 'withdrawal', 'payments']
+        credit_patterns = ['credit amount', 'credit_amount', 'credit', 'deposit', 'deposits']
         
         # Match headers to patterns
         # Check debit/credit patterns BEFORE amount patterns to avoid confusion
@@ -114,9 +114,9 @@ def detect_csv_format(file_path):
                 mapping['payee'] = headers[i]
             elif any(pattern in header for pattern in memo_patterns) and not mapping['memo']:
                 mapping['memo'] = headers[i]
-            elif any(pattern in header for pattern in debit_patterns):
+            elif any(pattern in header for pattern in debit_patterns) and not mapping['debit']:
                 mapping['debit'] = headers[i]
-            elif any(pattern in header for pattern in credit_patterns):
+            elif any(pattern in header for pattern in credit_patterns) and not mapping['credit']:
                 mapping['credit'] = headers[i]
             elif any(pattern in header for pattern in amount_patterns) and not mapping['amount']:
                 mapping['amount'] = headers[i]
