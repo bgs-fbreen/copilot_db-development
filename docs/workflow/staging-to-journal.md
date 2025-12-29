@@ -356,8 +356,7 @@ copilot staging assign <id> <gl_code>
 
 **Solution:** Check the original staging transaction
 ```sql
--- Replace {staging_id} with the actual ID from the trial entry
-SELECT * FROM acc.bank_staging WHERE id = {staging_id};
+SELECT * FROM acc.bank_staging WHERE id = <staging_id>;
 ```
 If the source data is correct, the entry may need manual correction in the staging table.
 
