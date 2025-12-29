@@ -57,6 +57,7 @@ def staging_list(entity, account, status, limit):
             amount,
             gl_account_code,
             match_method,
+            check_number,
             entity
         FROM acc.bank_staging
         {where_clause}
@@ -78,6 +79,7 @@ def staging_list(entity, account, status, limit):
     table.add_column("Amount", justify="right")
     table.add_column("GL Code", style="yellow")
     table.add_column("Match", style="dim")
+    table.add_column("Check #", style="cyan")
     
     for row in results:
         amount_style = "green" if row['amount'] > 0 else "red"
@@ -89,7 +91,8 @@ def staging_list(entity, account, status, limit):
             row['description'],
             f"[{amount_style}]{row['amount']:,.2f}[/{amount_style}]",
             f"[{gl_style}]{row['gl_account_code']}[/{gl_style}]",
-            row['match_method'] or '-'
+            row['match_method'] or '-',
+            row['check_number'] or '-'
         )
     
     console.print(table)
@@ -118,6 +121,7 @@ def staging_todos(entity):
             normalized_date,
             description,
             amount,
+            check_number,
             entity
         FROM acc.bank_staging
         WHERE gl_account_code = 'TODO'
@@ -140,6 +144,7 @@ def staging_todos(entity):
     table.add_column("Date", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Amount", justify="right")
+    table.add_column("Check #", style="cyan")
     
     for row in results:
         amount_style = "green" if row['amount'] > 0 else "red"
@@ -149,7 +154,8 @@ def staging_todos(entity):
             row['source_account_code'],
             str(row['normalized_date']),
             row['description'][:50],
-            f"[{amount_style}]{row['amount']:,.2f}[/{amount_style}]"
+            f"[{amount_style}]{row['amount']:,.2f}[/{amount_style}]",
+            row['check_number'] or '-'
         )
     
     console.print(table)

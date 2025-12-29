@@ -138,6 +138,7 @@ def trial_list(entity, status, limit):
             entry_date,
             SUBSTRING(description, 1, 35) as description,
             entity,
+            check_number,
             total_debit,
             total_credit,
             balance_status,
@@ -159,6 +160,7 @@ def trial_list(entity, status, limit):
     table.add_column("Date", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Entity", style="white")
+    table.add_column("Check #", style="cyan")
     table.add_column("Debit", justify="right", style="red")
     table.add_column("Credit", justify="right", style="green")
     table.add_column("Balance", style="yellow")
@@ -172,6 +174,7 @@ def trial_list(entity, status, limit):
             str(row['entry_date']),
             row['description'] or '-',
             row['entity'],
+            row['check_number'] or '-',
             f"{row['total_debit'] or 0:,.2f}",
             f"{row['total_credit'] or 0:,.2f}",
             f"[{balance_style}]{row['balance_status']}[/{balance_style}]",
@@ -349,6 +352,7 @@ def trial_ready(entity):
     table.add_column("Date", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Entity", style="white")
+    table.add_column("Check #", style="cyan")
     table.add_column("Amount", justify="right", style="green")
     
     for row in results:
@@ -357,6 +361,7 @@ def trial_ready(entity):
             str(row['entry_date']),
             row['description'][:40] if row['description'] else '-',
             row['entity'],
+            row['check_number'] or '-',
             f"${row['total_debit']:,.2f}"
         )
     
