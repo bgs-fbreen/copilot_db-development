@@ -125,8 +125,8 @@ copilot journal trial-balance --entity bgs
 
 ```bash
 # Generate entries for specific month
-copilot trial generate --entity bgs \
-  --date-from 2024-01-01 \
+copilot trial generate --entity bgs       \
+  --date-from 2024-01-01                  \
   --date-to 2024-01-31
 
 # Validate and post

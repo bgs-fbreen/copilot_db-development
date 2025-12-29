@@ -356,7 +356,8 @@ copilot staging assign <id> <gl_code>
 
 **Solution:** Check the original staging transaction
 ```sql
-SELECT * FROM acc.bank_staging WHERE id = <staging_id>;
+-- Replace {staging_id} with the actual ID from the trial entry
+SELECT * FROM acc.bank_staging WHERE id = {staging_id};
 ```
 If the source data is correct, the entry may need manual correction in the staging table.
 
@@ -397,18 +398,38 @@ Fix any balance or GL code issues, then validate again.
 
 ### Part 01: Staging
 ```bash
-copilot import csv|list
-copilot staging list|todos|assign|summary|transfers
+# Import commands
+copilot import csv
+copilot import list
+
+# Staging commands
+copilot staging list
+copilot staging todos
+copilot staging assign
+copilot staging summary
+copilot staging transfers
 ```
 
 ### Part 02: Trial
 ```bash
-copilot trial generate|validate|list|errors|match-transfers|summary|ready
+copilot trial generate
+copilot trial validate
+copilot trial list
+copilot trial errors
+copilot trial match-transfers
+copilot trial summary
+copilot trial ready
 ```
 
 ### Part 03: Journal
 ```bash
-copilot journal post|list|view|reverse|balances|trial-balance|summary
+copilot journal post
+copilot journal list
+copilot journal view
+copilot journal reverse
+copilot journal balances
+copilot journal trial-balance
+copilot journal summary
 ```
 
 ### Status Progression
