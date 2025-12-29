@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS acc.bank_staging (
     source VARCHAR(50) DEFAULT 'csv_import',
     import_id VARCHAR(200),
     check_number VARCHAR(20),
+    source_institution VARCHAR(200),
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -37,6 +38,7 @@ COMMENT ON COLUMN acc.bank_staging.gl_account_code IS 'GL account code assigned 
 COMMENT ON COLUMN acc.bank_staging.match_method IS 'How GL code was assigned: pattern, manual, or NULL for TODO';
 COMMENT ON COLUMN acc.bank_staging.match_confidence IS 'Confidence score of pattern match (0-100)';
 COMMENT ON COLUMN acc.bank_staging.check_number IS 'Check number for check transactions';
+COMMENT ON COLUMN acc.bank_staging.source_institution IS 'Bank institution name from source account';
 
 CREATE INDEX idx_staging_account ON acc.bank_staging(source_account_code);
 CREATE INDEX idx_staging_date ON acc.bank_staging(normalized_date);
@@ -45,6 +47,7 @@ CREATE INDEX idx_staging_gl ON acc.bank_staging(gl_account_code);
 CREATE INDEX idx_staging_match_method ON acc.bank_staging(match_method);
 CREATE INDEX idx_staging_reconciled ON acc.bank_staging(reconciled);
 CREATE INDEX idx_staging_check ON acc.bank_staging(check_number);
+CREATE INDEX idx_staging_source_institution ON acc.bank_staging(source_institution);
 
 -- ============================================================================
 -- VENDOR GL PATTERNS TABLE
