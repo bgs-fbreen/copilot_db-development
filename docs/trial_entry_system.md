@@ -36,6 +36,7 @@ Debit and credit lines for each trial entry. Each entry has multiple lines that 
 **Constraints:**
 - Each line must have debit OR credit, not both (enforced via check constraint)
 - Debit and credit amounts must be >= 0
+- Note: The constraint allows zero-amount lines (both debit and credit = 0) as per specification, though these should be avoided in normal accounting practice
 
 ### Views
 
