@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS acc.journal (
     entity VARCHAR(50) NOT NULL,
     source_trial_id INTEGER REFERENCES acc.trial_entry(id),
     reference_num VARCHAR(50),
+    check_number VARCHAR(20),
     posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     posted_by VARCHAR(100),
     reversal_of INTEGER REFERENCES acc.journal(id),
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS acc.journal (
 
 COMMENT ON TABLE acc.journal IS 'Final, immutable journal entries - the permanent accounting record';
 COMMENT ON COLUMN acc.journal.source_trial_id IS 'Reference to trial_entry that was posted';
+COMMENT ON COLUMN acc.journal.check_number IS 'Check number for check transactions';
 COMMENT ON COLUMN acc.journal.reversal_of IS 'If this is a reversal entry, points to the original';
 COMMENT ON COLUMN acc.journal.reversed_by IS 'If this entry was reversed, points to the reversal entry';
 
@@ -31,6 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_journal_date ON acc.journal(entry_date);
 CREATE INDEX IF NOT EXISTS idx_journal_entity ON acc.journal(entity);
 CREATE INDEX IF NOT EXISTS idx_journal_trial ON acc.journal(source_trial_id);
 CREATE INDEX IF NOT EXISTS idx_journal_reference ON acc.journal(reference_num);
+CREATE INDEX IF NOT EXISTS idx_journal_check ON acc.journal(check_number);
 
 -- ============================================================================
 -- JOURNAL LINE TABLE - Debit/Credit Lines
@@ -90,6 +93,7 @@ SELECT
     j.description,
     j.entity,
     j.reference_num,
+    j.check_number,
     j.posted_at,
     COUNT(l.id) as line_count,
     SUM(l.debit) as total_debit,
@@ -102,7 +106,7 @@ SELECT
     END as balance_status
 FROM acc.journal j
 LEFT JOIN acc.journal_line l ON l.journal_id = j.id
-GROUP BY j.id, j.entry_date, j.description, j.entity, j.reference_num, j.posted_at;
+GROUP BY j.id, j.entry_date, j.description, j.entity, j.reference_num, j.check_number, j.posted_at;
 
 COMMENT ON VIEW acc.vw_journal_entry_balance IS 'Shows balance status for each journal entry';
 
@@ -169,8 +173,8 @@ BEGIN
         END IF;
         
         -- Create journal entry
-        INSERT INTO acc.journal (entry_date, description, entity, source_trial_id, posted_by)
-        VALUES (v_trial.entry_date, v_trial.description, v_trial.entity, v_trial.id, p_posted_by)
+        INSERT INTO acc.journal (entry_date, description, entity, source_trial_id, posted_by, check_number)
+        VALUES (v_trial.entry_date, v_trial.description, v_trial.entity, v_trial.id, p_posted_by, v_trial.check_number)
         RETURNING id INTO v_journal_id;
         
         -- Copy lines from trial entry

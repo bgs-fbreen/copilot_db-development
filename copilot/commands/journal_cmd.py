@@ -116,6 +116,7 @@ def journal_list(entity, date_from, date_to, limit):
             SUBSTRING(j.description, 1, 35) as description,
             j.entity,
             j.reference_num,
+            j.check_number,
             b.total_debit,
             b.total_credit,
             b.balance_status,
@@ -143,6 +144,7 @@ def journal_list(entity, date_from, date_to, limit):
     table.add_column("Description", style="white")
     table.add_column("Entity", style="white")
     table.add_column("Ref", style="dim")
+    table.add_column("Check #", style="cyan")
     table.add_column("Debit", justify="right", style="red")
     table.add_column("Credit", justify="right", style="green")
     table.add_column("Status")
@@ -155,6 +157,7 @@ def journal_list(entity, date_from, date_to, limit):
             row['description'] or '-',
             row['entity'],
             row['reference_num'] or '-',
+            row['check_number'] or '-',
             f"{row['total_debit'] or 0:,.2f}",
             f"{row['total_credit'] or 0:,.2f}",
             f"[{status_style}]{row['status']}[/{status_style}]"
@@ -200,6 +203,7 @@ def journal_view(journal_id):
     console.print(f"  Entity:      {entry['entity']}")
     console.print(f"  Description: {entry['description'] or '-'}")
     console.print(f"  Reference:   {entry['reference_num'] or '-'}")
+    console.print(f"  Check #:     {entry['check_number'] or '-'}")
     console.print(f"  Posted:      {entry['posted_at']} by {entry['posted_by'] or 'system'}")
     console.print(f"  Status:      {status}")
     console.print(f"  Balance:     [{('green' if entry['balance_status'] == 'BALANCED' else 'red')}]{entry['balance_status']}[/]")
