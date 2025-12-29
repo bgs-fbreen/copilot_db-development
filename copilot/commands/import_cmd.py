@@ -71,6 +71,45 @@ def parse_date(date_str):
     return None
 
 
+def is_check_transaction(memo, column_name):
+    """
+    Determine if a transaction is a check based on memo content.
+    
+    Args:
+        memo: The transaction memo/description
+        column_name: The name of the column that contained the potential check number
+        
+    Returns:
+        True if this appears to be a check transaction
+    """
+    if not memo:
+        # If column was explicitly named as check number, trust it
+        if column_name:
+            col_lower = column_name.lower()
+            return any(p in col_lower for p in ['check number', 'check_number', 'check #', 'check no', 'chk'])
+        return False
+    
+    memo_upper = memo.upper()
+    
+    # Explicit check indicators
+    if 'SUBSTITUTE CHECK' in memo_upper:
+        return True
+    
+    # "CHECK" as a word but not "CHECKING"
+    if 'CHECKING' in memo_upper:
+        return False
+        
+    # Check for "CHECK" as a standalone word
+    if ' CHECK ' in f' {memo_upper} ':
+        return True
+    if memo_upper.endswith(' CHECK'):
+        return True
+    if memo_upper.startswith('CHECK '):
+        return True
+        
+    return False
+
+
 def detect_csv_format(file_path):
     """Detect CSV format and column mappings"""
     with open(file_path, 'r', encoding='utf-8-sig') as f:
@@ -268,7 +307,22 @@ def import_csv(file, account, dry_run):
             payee = row.get(mapping['payee'], '') if mapping['payee'] else ''
             memo = row.get(mapping['memo'], '') if mapping['memo'] else ''
             post_date = parse_date(row.get(mapping['post_date'], '')) if mapping['post_date'] else None
-            check_number = row.get(mapping['check_number'], '').strip() or None if mapping['check_number'] else None
+            
+            # Smart check number detection
+            raw_check_num = row.get(mapping['check_number'], '').strip() if mapping['check_number'] else None
+            
+            # Determine if this is actually a check transaction
+            check_number = None
+            if raw_check_num and raw_check_num != '0':
+                # Check if memo indicates this is a check transaction
+                if is_check_transaction(memo, mapping.get('check_number')):
+                    check_number = raw_check_num
+                # If column was explicitly named as check number, trust it
+                elif mapping.get('check_number') and any(
+                    pattern in mapping['check_number'].lower() 
+                    for pattern in ['check number', 'check_number', 'check #', 'check no', 'chk']
+                ):
+                    check_number = raw_check_num
             
             transactions.append({
                 'trans_date': trans_date,
