@@ -3,7 +3,7 @@ import click
 from rich.console import Console
 from copilot.commands import (version, timesheet, new, edit, ar, invoice, client, 
                                 project, report, baseline, import_cmd, allocate,
-                                staging_cmd, trial_cmd)
+                                staging_cmd, trial_cmd, journal_cmd)
 
 console = Console()
 
@@ -35,6 +35,7 @@ cli.add_command(import_cmd)
 cli.add_command(allocate)
 cli.add_command(staging_cmd)
 cli.add_command(trial_cmd)
+cli.add_command(journal_cmd)
 
 if __name__ == '__main__':
     cli()
