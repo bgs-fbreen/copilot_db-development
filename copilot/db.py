@@ -42,3 +42,13 @@ def execute_insert(query, params=None):
                 return cur.fetchone()[0] if cur.description else None
     finally:
         conn.close()
+
+def execute_command(query, params=None):
+    """Execute a command (INSERT/UPDATE/DELETE) without returning results"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            conn.commit()
+    finally:
+        conn.close()
