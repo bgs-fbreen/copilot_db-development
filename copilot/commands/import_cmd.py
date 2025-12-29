@@ -268,7 +268,7 @@ def import_csv(file, account, dry_run):
             payee = row.get(mapping['payee'], '') if mapping['payee'] else ''
             memo = row.get(mapping['memo'], '') if mapping['memo'] else ''
             post_date = parse_date(row.get(mapping['post_date'], '')) if mapping['post_date'] else None
-            check_number = row.get(mapping['check_number'], '').strip() if mapping['check_number'] else None
+            check_number = row.get(mapping['check_number'], '').strip() or None if mapping['check_number'] else None
             
             transactions.append({
                 'trans_date': trans_date,
