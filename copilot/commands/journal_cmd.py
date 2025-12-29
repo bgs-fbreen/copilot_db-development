@@ -284,8 +284,10 @@ def journal_reverse(journal_id, reason, reversed_by):
             reversal_id = result[0]['reversal_id']
             console.print(f"\n[green]✓ Created reversal entry #{reversal_id}[/green]")
             console.print(f"[dim]Original entry #{journal_id} is now marked as reversed[/dim]")
+        else:
+            console.print(f"[red]Error: Failed to create reversal entry[/red]")
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error creating reversal: {e}[/red]")
 
 
 @journal_cmd.command('balances')
