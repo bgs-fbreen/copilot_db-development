@@ -15,6 +15,7 @@ CREATE TABLE acc.trial_entry (
     entity VARCHAR(50) NOT NULL,
     source_staging_id INTEGER REFERENCES acc.bank_staging(id),
     transfer_match_id INTEGER REFERENCES acc.trial_entry(id),
+    check_number VARCHAR(20),
     status VARCHAR(20) DEFAULT 'pending',
     error_message TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -24,12 +25,14 @@ CREATE TABLE acc.trial_entry (
 COMMENT ON TABLE acc.trial_entry IS 'Trial/pending journal entries awaiting validation and posting';
 COMMENT ON COLUMN acc.trial_entry.source_staging_id IS 'Reference to bank_staging record that generated this entry';
 COMMENT ON COLUMN acc.trial_entry.transfer_match_id IS 'For transfers: links to the matching entry in other account';
+COMMENT ON COLUMN acc.trial_entry.check_number IS 'Check number carried from bank_staging';
 COMMENT ON COLUMN acc.trial_entry.status IS 'pending=needs review, balanced=ready to post, posted=in journal, error=validation failed';
 
 CREATE INDEX idx_trial_entry_date ON acc.trial_entry(entry_date);
 CREATE INDEX idx_trial_entry_entity ON acc.trial_entry(entity);
 CREATE INDEX idx_trial_entry_status ON acc.trial_entry(status);
 CREATE INDEX idx_trial_entry_staging ON acc.trial_entry(source_staging_id);
+CREATE INDEX idx_trial_entry_check ON acc.trial_entry(check_number);
 
 -- ============================================================================
 -- TRIAL ENTRY LINE - Debit/Credit Lines
@@ -70,6 +73,7 @@ SELECT
     e.entity,
     e.status,
     e.source_staging_id,
+    e.check_number,
     COUNT(l.id) as line_count,
     SUM(l.debit) as total_debit,
     SUM(l.credit) as total_credit,
@@ -81,7 +85,7 @@ SELECT
     END as balance_status
 FROM acc.trial_entry e
 LEFT JOIN acc.trial_entry_line l ON l.entry_id = e.id
-GROUP BY e.id, e.entry_date, e.description, e.entity, e.status, e.source_staging_id;
+GROUP BY e.id, e.entry_date, e.description, e.entity, e.status, e.source_staging_id, e.check_number;
 
 -- Entries with invalid GL codes
 CREATE OR REPLACE VIEW acc.vw_trial_invalid_gl AS
@@ -103,6 +107,7 @@ SELECT
     b.entry_date,
     b.description,
     b.entity,
+    b.check_number,
     b.total_debit,
     b.total_credit
 FROM acc.vw_trial_entry_balance b
@@ -162,8 +167,8 @@ BEGIN
           )
     LOOP
         -- Create trial entry header
-        INSERT INTO acc.trial_entry (entry_date, description, entity, source_staging_id, status)
-        VALUES (v_staging.normalized_date, v_staging.description, v_staging.entity, v_staging.id, 'pending')
+        INSERT INTO acc.trial_entry (entry_date, description, entity, source_staging_id, status, check_number)
+        VALUES (v_staging.normalized_date, v_staging.description, v_staging.entity, v_staging.id, 'pending', v_staging.check_number)
         RETURNING id INTO v_entry_id;
         
         -- Create debit/credit lines based on amount sign
