@@ -117,7 +117,7 @@ SELECT
     b.total_credit
 FROM acc.vw_trial_entry_balance b
 WHERE b.balance_status = 'BALANCED'
-  AND b.status = 'pending'
+  AND b.status = 'balanced'
   AND NOT EXISTS (
       SELECT 1 FROM acc.vw_trial_invalid_gl inv WHERE inv.entry_id = b.id
   );
