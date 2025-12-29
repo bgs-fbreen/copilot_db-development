@@ -2,7 +2,7 @@ import click
 import os
 from rich.console import Console
 from rich.table import Table
-from copilot.db import execute_query, execute_command, get_connection
+from copilot.db import execute_query, execute_command
 
 console = Console()
 
