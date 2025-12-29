@@ -92,6 +92,7 @@ def detect_csv_format(file_path):
             'amount': None,
             'debit': None,
             'credit': None,
+            'check_number': None,
         }
         
         # Common patterns for each field
@@ -102,6 +103,7 @@ def detect_csv_format(file_path):
         amount_patterns = ['amount', 'transaction amount', 'value']
         debit_patterns = ['debit amount', 'debit_amount', 'debit', 'withdrawal', 'payments']
         credit_patterns = ['credit amount', 'credit_amount', 'credit', 'deposit', 'deposits']
+        check_patterns = ['check number', 'check_number', 'check #', 'check no', 'check', 'chk', 'chk #', 'chk no', 'reference', 'ref']
         
         # Match headers to patterns
         # Check debit/credit patterns BEFORE amount patterns to avoid confusion
@@ -120,6 +122,8 @@ def detect_csv_format(file_path):
                 mapping['credit'] = headers[i]
             elif any(pattern in header for pattern in amount_patterns) and not mapping['amount']:
                 mapping['amount'] = headers[i]
+            elif any(pattern in header for pattern in check_patterns) and not mapping['check_number']:
+                mapping['check_number'] = headers[i]
         
         # If no payee found but memo exists, use memo as payee
         if not mapping['payee'] and mapping['memo']:
@@ -232,6 +236,8 @@ def import_csv(file, account, dry_run):
     elif mapping['debit'] and mapping['credit']:
         console.print(f"  Debit column: {mapping['debit']}")
         console.print(f"  Credit column: {mapping['credit']}")
+    if mapping['check_number']:
+        console.print(f"  [cyan]Check Number:[/cyan] {mapping['check_number']}")
     console.print()
     
     # Parse transactions
@@ -262,13 +268,15 @@ def import_csv(file, account, dry_run):
             payee = row.get(mapping['payee'], '') if mapping['payee'] else ''
             memo = row.get(mapping['memo'], '') if mapping['memo'] else ''
             post_date = parse_date(row.get(mapping['post_date'], '')) if mapping['post_date'] else None
+            check_number = row.get(mapping['check_number'], '').strip() or None if mapping['check_number'] else None
             
             transactions.append({
                 'trans_date': trans_date,
                 'post_date': post_date or trans_date,
                 'payee': payee,
                 'memo': memo,
-                'amount': amount
+                'amount': amount,
+                'check_number': check_number
             })
     
     if not transactions:
@@ -286,6 +294,7 @@ def import_csv(file, account, dry_run):
     table.add_column("Date", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Amount", justify="right", style="green")
+    table.add_column("Check #", style="cyan")
     table.add_column("Status", style="yellow")
     
     imported_count = 0
@@ -307,11 +316,12 @@ def import_csv(file, account, dry_run):
             trans['trans_date'].strftime('%Y-%m-%d'),
             trans['payee'][:40],
             amount_str,
+            trans['check_number'] or '-',
             status
         )
     
     if len(transactions) > 10:
-        table.add_row("[dim]...", "[dim]...", "[dim]...", f"[dim]{len(transactions) - 10} more...")
+        table.add_row("[dim]...", "[dim]...", "[dim]...", "[dim]...", f"[dim]{len(transactions) - 10} more...")
     
     console.print(table)
     console.print()
@@ -442,10 +452,11 @@ def import_csv(file, account, dry_run):
                 cur.execute("""
                     INSERT INTO acc.bank_staging
                         (source_account_code, normalized_date, post_date, description, memo, 
-                         amount, entity, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                         amount, entity, source, check_number)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (account, trans['trans_date'], trans['post_date'], 
-                      trans['payee'], trans['memo'], trans['amount'], entity, 'csv_import'))
+                      trans['payee'], trans['memo'], trans['amount'], entity, 'csv_import',
+                      trans['check_number']))
             
             # Log the import
             cur.execute("""
