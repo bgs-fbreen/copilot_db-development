@@ -219,7 +219,7 @@ def import_csv(file, account, dry_run):
     
     # Verify account exists
     accounts = execute_query("""
-        SELECT code, name FROM acc.bank_account WHERE code = %s
+        SELECT code, name, institution FROM acc.bank_account WHERE code = %s
     """, (account,))
     
     if not accounts:
@@ -242,6 +242,9 @@ def import_csv(file, account, dry_run):
     
     console.print(f"[bold]Account:[/bold] {accounts[0]['name']} ({account})")
     console.print(f"[bold]File:[/bold] {os.path.basename(file)}\n")
+    
+    # Capture institution from account for later use
+    institution = accounts[0].get('institution')
     
     # Check if file was already imported
     file_hash = compute_file_hash(file)
@@ -506,11 +509,11 @@ def import_csv(file, account, dry_run):
                 cur.execute("""
                     INSERT INTO acc.bank_staging
                         (source_account_code, normalized_date, post_date, description, memo, 
-                         amount, entity, source, check_number)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         amount, entity, source, check_number, source_institution)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (account, trans['trans_date'], trans['post_date'], 
                       trans['payee'], trans['memo'], trans['amount'], entity, 'csv_import',
-                      trans['check_number']))
+                      trans['check_number'], institution))
             
             # Log the import
             cur.execute("""
