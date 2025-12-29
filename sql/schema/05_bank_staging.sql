@@ -47,6 +47,7 @@ CREATE INDEX idx_staging_gl ON acc.bank_staging(gl_account_code);
 CREATE INDEX idx_staging_match_method ON acc.bank_staging(match_method);
 CREATE INDEX idx_staging_reconciled ON acc.bank_staging(reconciled);
 CREATE INDEX idx_staging_check ON acc.bank_staging(check_number);
+CREATE INDEX idx_staging_source_institution ON acc.bank_staging(source_institution);
 
 -- ============================================================================
 -- VENDOR GL PATTERNS TABLE
