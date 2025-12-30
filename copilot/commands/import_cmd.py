@@ -218,8 +218,14 @@ def show_import_help():
                 was.reason as skip_reason
             FROM acc.bank_account ba
             LEFT JOIN acc.bank_staging bs ON bs.source_account_code = ba.code
-            LEFT JOIN acc.wizard_account_status was ON was.account_code = ba.code
-                AND was.entity = ba.entity
+            LEFT JOIN LATERAL (
+                SELECT status, reason
+                FROM acc.wizard_account_status
+                WHERE account_code = ba.code
+                  AND entity = ba.entity
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ) was ON true
             WHERE ba.status = 'active'
             GROUP BY ba.code, ba.name, ba.institution, was.status, was.reason
             ORDER BY ba.code
