@@ -433,11 +433,12 @@ def import_csv(file, account, period, dry_run):
             console.print("Examples: 2024, 2024-Q4, 2024-12")
             return
         
-        console.print(f"[bold]Period Filter:[/bold] {period} ({start_date} → {end_date})\n")
+        console.print(f"[bold]Period Filter:[/bold] {period} ({start_date} to {end_date})\n")
         
-        # Filter transactions
+        # Filter transactions (defensive check for None dates)
         original_count = len(transactions)
-        transactions = [t for t in transactions if start_date <= t['trans_date'] <= end_date]
+        transactions = [t for t in transactions 
+                       if t.get('trans_date') and start_date <= t['trans_date'] <= end_date]
         filtered_count = original_count - len(transactions)
         
         if filtered_count > 0:
