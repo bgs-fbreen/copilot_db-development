@@ -2,6 +2,8 @@ import click
 import os
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
 from copilot.db import execute_query, execute_command
 
 console = Console()
@@ -9,6 +11,126 @@ console = Console()
 def clear_screen():
     """Clear the terminal screen"""
     os.system('clear' if os.name != 'nt' else 'cls')
+
+
+# ============================================================================
+# Helper functions for assign-todo command
+# ============================================================================
+
+def get_todo_grouped(entity):
+    """Return TODO transactions grouped by description with counts"""
+    query = """
+        SELECT description, COUNT(*) as cnt, SUM(amount) as total
+        FROM acc.bank_staging
+        WHERE gl_account_code = 'TODO'
+          AND entity = %s
+        GROUP BY description
+        ORDER BY COUNT(*) DESC
+    """
+    return execute_query(query, (entity,))
+
+
+def get_existing_patterns(description, entity):
+    """Find matching patterns for a description"""
+    query = """
+        SELECT pattern, gl_account_code, notes
+        FROM acc.vendor_gl_patterns
+        WHERE %s ILIKE '%' || pattern || '%'
+          AND entity = %s
+          AND active = true
+        ORDER BY priority DESC
+    """
+    return execute_query(query, (description, entity))
+
+
+def get_similar_assignments(description, entity):
+    """Find similar descriptions that have been assigned GL codes"""
+    query = """
+        SELECT DISTINCT description, gl_account_code, COUNT(*) as cnt
+        FROM acc.bank_staging
+        WHERE gl_account_code != 'TODO'
+          AND entity = %s
+          AND description != %s
+        GROUP BY description, gl_account_code
+        ORDER BY cnt DESC
+        LIMIT 5
+    """
+    return execute_query(query, (entity, description))
+
+
+def get_gl_usage_stats(entity):
+    """Get GL code usage frequency for this entity"""
+    query = """
+        SELECT gl_account_code, COUNT(*) as cnt
+        FROM acc.bank_staging
+        WHERE gl_account_code != 'TODO'
+          AND entity = %s
+        GROUP BY gl_account_code
+        ORDER BY cnt DESC
+        LIMIT 10
+    """
+    return execute_query(query, (entity,))
+
+
+def assign_gl_code(description, gl_code, entity, notes=None):
+    """Update all matching transactions and create pattern"""
+    
+    # Update bank_staging
+    update_query = """
+        UPDATE acc.bank_staging
+        SET gl_account_code = %s,
+            match_method = 'manual',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE description = %s
+          AND gl_account_code = 'TODO'
+          AND entity = %s
+    """
+    
+    # Count affected rows
+    count_query = """
+        SELECT COUNT(*) as cnt
+        FROM acc.bank_staging
+        WHERE description = %s
+          AND gl_account_code = 'TODO'
+          AND entity = %s
+    """
+    count_result = execute_query(count_query, (description, entity))
+    count = count_result[0]['cnt'] if count_result else 0
+    
+    # Execute update
+    execute_command(update_query, (gl_code, description, entity))
+    
+    # Create pattern for future imports
+    pattern = description
+    pattern_query = """
+        INSERT INTO acc.vendor_gl_patterns (pattern, gl_account_code, entity, notes, priority)
+        VALUES (%s, %s, %s, %s, 100)
+        ON CONFLICT DO NOTHING
+    """
+    execute_command(pattern_query, (pattern, gl_code, entity, notes))
+    
+    return count
+
+
+def list_gl_codes(filter_type=None):
+    """List available GL account codes"""
+    if filter_type:
+        query = """
+            SELECT code, name, account_type
+            FROM acc.bank_account
+            WHERE status = 'active'
+              AND account_type ILIKE %s
+            ORDER BY code
+        """
+        return execute_query(query, (f'%{filter_type}%',))
+    else:
+        query = """
+            SELECT code, name, account_type
+            FROM acc.bank_account
+            WHERE status = 'active'
+            ORDER BY account_type, code
+        """
+        return execute_query(query)
 
 @click.group('staging')
 def staging_cmd():
@@ -295,3 +417,176 @@ def staging_transfers(entity):
         )
     
     console.print(table)
+
+
+@staging_cmd.command('assign-todo')
+@click.option('--entity', '-e', required=True, help='Entity code (e.g., bgs)')
+def assign_todo(entity):
+    """Interactive GL code assignment for TODO transactions"""
+    
+    while True:
+        clear_screen()
+        
+        # Display header
+        console.print("\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
+        console.print(f"[bold cyan]   Assign GL Codes - {entity.upper()} Entity[/bold cyan]")
+        console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
+        
+        # Get grouped TODO transactions
+        todos = get_todo_grouped(entity)
+        
+        if not todos:
+            console.print("[green]✓ No TODO transactions - all assigned![/green]")
+            return
+        
+        console.print("Transactions needing GL codes (grouped by description):\n")
+        
+        # Display grouped transactions table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="cyan", justify="right")
+        table.add_column("Description", style="white")
+        table.add_column("Count", justify="right", style="yellow")
+        table.add_column("Total Amount", justify="right")
+        
+        for idx, row in enumerate(todos, 1):
+            amount_style = "green" if row['total'] > 0 else "red"
+            table.add_row(
+                str(idx),
+                row['description'][:50],
+                str(row['cnt']),
+                f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]"
+            )
+        
+        console.print(table)
+        console.print()
+        
+        # Get user selection
+        selection = console.input("[bold yellow]Enter # to assign (or 'q' to quit): [/bold yellow]")
+        
+        if selection.lower() == 'q':
+            console.print("\n[dim]Exiting...[/dim]")
+            break
+        
+        try:
+            idx = int(selection) - 1
+            if idx < 0 or idx >= len(todos):
+                console.print("[red]Invalid selection[/red]")
+                console.input("\nPress Enter to continue...")
+                continue
+        except ValueError:
+            console.print("[red]Invalid input[/red]")
+            console.input("\nPress Enter to continue...")
+            continue
+        
+        selected = todos[idx]
+        description = selected['description']
+        count = selected['cnt']
+        total = selected['total']
+        
+        clear_screen()
+        console.print(f"\n[bold green]Selected:[/bold green] {description} ({count} transactions, ${total:,.2f})\n")
+        
+        # Get optional context from user
+        user_context = console.input("Describe this transaction (optional, helps with recommendations): ")
+        console.print()
+        
+        # Display recommendations
+        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
+        console.print("[bold cyan] Recommendations (based on YOUR data):[/bold cyan]")
+        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
+        
+        # 1. Check existing patterns
+        existing = get_existing_patterns(description, entity)
+        if existing:
+            console.print("[bold white] From your existing patterns:[/bold white]")
+            for pattern in existing:
+                note_text = f" - {pattern['notes']}" if pattern['notes'] else ""
+                console.print(f"   • \"{pattern['pattern']}\" → [cyan]{pattern['gl_account_code']}[/cyan]{note_text}")
+            console.print()
+        else:
+            console.print("[dim] From your existing patterns:[/dim]")
+            console.print(f"[dim]   (none found for \"{description[:40]}...\")[/dim]\n")
+        
+        # 2. Show similar historical assignments
+        similar = get_similar_assignments(description, entity)
+        if similar:
+            console.print("[bold white] From similar transactions you've assigned:[/bold white]")
+            for sim in similar:
+                console.print(f"   • \"{sim['description'][:40]}...\" → [cyan]{sim['gl_account_code']}[/cyan] ({sim['cnt']} transactions)")
+            console.print()
+        
+        # 3. Show most-used GL codes
+        usage_stats = get_gl_usage_stats(entity)
+        if usage_stats:
+            console.print("[bold white] Your most-used codes:[/bold white]")
+            for stat in usage_stats:
+                console.print(f"   • [cyan]{stat['gl_account_code']}[/cyan] ({stat['cnt']} uses)")
+            console.print()
+        
+        # 4. Keyword matching suggestions (simple implementation)
+        if user_context:
+            keywords = user_context.lower()
+            suggestions = []
+            
+            # Simple keyword matching
+            if any(word in keywords for word in ['bookkeeping', 'accounting', 'professional']):
+                suggestions.extend(['exp:professional', 'exp:contractor'])
+            if any(word in keywords for word in ['wage', 'salary', 'payroll', 'employee']):
+                suggestions.append('exp:wages')
+            if any(word in keywords for word in ['contractor', 'freelance', '1099']):
+                suggestions.append('exp:contractor')
+            if any(word in keywords for word in ['rent', 'lease']):
+                suggestions.append('exp:rent')
+            if any(word in keywords for word in ['utilities', 'electric', 'gas', 'water']):
+                suggestions.append('exp:utilities')
+            
+            if suggestions:
+                console.print("[bold white] Keyword matches:[/bold white]")
+                for suggestion in set(suggestions):
+                    console.print(f"   • \"{keywords[:30]}...\" → [cyan]{suggestion}[/cyan]")
+                console.print()
+        
+        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
+        
+        # Get GL code assignment
+        gl_code = console.input("[bold yellow]Enter GL code (or '?' for full list): [/bold yellow]")
+        
+        if gl_code == '?':
+            # Show full GL code list
+            console.print("\n[bold]Available GL Codes:[/bold]\n")
+            codes = list_gl_codes()
+            
+            if codes:
+                code_table = Table(show_header=True, header_style="bold magenta")
+                code_table.add_column("Code", style="cyan")
+                code_table.add_column("Name", style="white")
+                code_table.add_column("Type", style="green")
+                
+                for code in codes[:20]:  # Show first 20
+                    code_table.add_row(code['code'], code['name'], code['account_type'])
+                
+                console.print(code_table)
+                if len(codes) > 20:
+                    console.print(f"\n[dim]Showing 20 of {len(codes)} codes. Use 'copilot gl list' for full list.[/dim]")
+            
+            gl_code = console.input("\n[bold yellow]Enter GL code: [/bold yellow]")
+        
+        if not gl_code or gl_code.lower() == 'q':
+            continue
+        
+        # Assign the GL code
+        try:
+            updated_count = assign_gl_code(description, gl_code, entity, user_context or None)
+            
+            console.print(f"\n[green]✓ Updated {updated_count} transactions → {gl_code}[/green]")
+            console.print(f"[green]✓ Created pattern: \"{description}\" → {gl_code}[/green]")
+            if user_context:
+                console.print(f"[green]✓ Saved note: \"{user_context}\"[/green]")
+            
+            console.print("\n")
+            console.input("[dim]Press Enter to continue...[/dim]")
+            
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            console.input("\nPress Enter to continue...")
+            continue
