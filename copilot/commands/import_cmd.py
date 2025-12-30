@@ -213,11 +213,15 @@ def show_import_help():
                 ba.institution,
                 COALESCE(COUNT(bs.id), 0) as record_count,
                 MIN(bs.normalized_date) as earliest_date,
-                MAX(bs.normalized_date) as latest_date
+                MAX(bs.normalized_date) as latest_date,
+                was.status as wizard_status,
+                was.reason as skip_reason
             FROM acc.bank_account ba
             LEFT JOIN acc.bank_staging bs ON bs.source_account_code = ba.code
+            LEFT JOIN acc.wizard_account_status was ON was.account_code = ba.code
+                AND was.entity = SPLIT_PART(ba.code, ':', 1)
             WHERE ba.status = 'active'
-            GROUP BY ba.code, ba.name, ba.institution
+            GROUP BY ba.code, ba.name, ba.institution, was.status, was.reason
             ORDER BY ba.code
         """)
         
@@ -234,6 +238,8 @@ def show_import_help():
             for idx, acc in enumerate(accounts, 1):
                 entity = extract_entity(acc['code'])
                 record_count = acc['record_count']
+                wizard_status = acc.get('wizard_status')
+                skip_reason = acc.get('skip_reason')
                 
                 # Format date range
                 if acc['earliest_date'] and acc['latest_date']:
@@ -241,9 +247,12 @@ def show_import_help():
                 else:
                     date_range = ""
                 
-                # Determine status
-                # Mark accounts with records as "Partial" since we don't track completion status
-                if record_count == 0:
+                # Determine status - prioritize wizard status
+                if wizard_status == 'skipped':
+                    reason_text = f" ({skip_reason})" if skip_reason else ""
+                    status = f"⊘ Skipped{reason_text}"
+                    status_color = "dim"
+                elif record_count == 0:
                     status = "✗ Not imported"
                     status_color = "red"
                 else:
