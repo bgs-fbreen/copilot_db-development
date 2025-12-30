@@ -3,10 +3,12 @@ Transaction allocation command - Categorize transactions
 """
 import click
 import os
+import calendar
+from datetime import date
 from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
-from copilot.db import execute_query, get_connection
+from copilot.db import execute_query, get_connection, execute_command
 
 console = Console()
 
@@ -478,3 +480,522 @@ def allocate_list(account, category, entity, month):
     else:
         console.print(trans_table)
         console.print()
+
+
+# ============================================================================
+# Wizard Helper Functions
+# ============================================================================
+
+def parse_period(period):
+    """
+    Parse period string into date range.
+    Formats: '2024', '2024-Q1', '2024-01'
+    Returns: (start_date, end_date)
+    """
+    if len(period) == 4:  # Year: 2024
+        year = int(period)
+        return date(year, 1, 1), date(year, 12, 31)
+    elif '-Q' in period:  # Quarter: 2024-Q1
+        year = int(period[:4])
+        quarter = int(period[-1])
+        start_month = (quarter - 1) * 3 + 1
+        end_month = start_month + 2
+        return date(year, start_month, 1), date(year, end_month, calendar.monthrange(year, end_month)[1])
+    elif len(period) == 7:  # Month: 2024-01
+        year, month = int(period[:4]), int(period[5:7])
+        return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+    else:
+        raise ValueError(f"Invalid period format: {period}. Use YYYY, YYYY-QN, or YYYY-MM")
+
+
+def get_import_status(entity, start_date, end_date):
+    """Get import status for all accounts belonging to entity"""
+    query = """
+        SELECT 
+            ba.code as account,
+            COUNT(bs.id) as record_count,
+            MIN(bs.normalized_date) as min_date,
+            MAX(bs.normalized_date) as max_date
+        FROM acc.bank_account ba
+        LEFT JOIN acc.bank_staging bs 
+            ON bs.source_account_code = ba.code
+            AND bs.normalized_date BETWEEN %s AND %s
+        WHERE ba.entity = %s
+        GROUP BY ba.code
+        ORDER BY ba.code
+    """
+    return execute_query(query, (start_date, end_date, entity))
+
+
+def detect_intercompany_transfers(entity, start_date, end_date):
+    """Find potential intercompany transfers - matching amounts on same date, opposite signs"""
+    query = """
+        SELECT 
+            a.id as from_id,
+            a.normalized_date,
+            a.entity as from_entity,
+            a.description as from_desc,
+            a.amount as from_amount,
+            b.id as to_id,
+            b.entity as to_entity,
+            b.description as to_desc,
+            b.amount as to_amount
+        FROM acc.bank_staging a
+        JOIN acc.bank_staging b 
+            ON a.normalized_date = b.normalized_date
+            AND a.amount = -b.amount
+            AND a.entity != b.entity
+            AND a.id < b.id
+        WHERE a.amount < 0
+          AND a.normalized_date BETWEEN %s AND %s
+          AND (a.entity = %s OR b.entity = %s)
+          AND a.gl_account_code = 'TODO'
+          AND b.gl_account_code = 'TODO'
+        ORDER BY a.normalized_date
+    """
+    return execute_query(query, (start_date, end_date, entity, entity))
+
+
+def detect_loan_payments(entity, start_date, end_date):
+    """Find potential loan payments based on known loan vendors"""
+    query = """
+        SELECT 
+            bs.id,
+            bs.normalized_date,
+            bs.source_account_code,
+            bs.description,
+            bs.amount,
+            vp.gl_account_code as suggested_code
+        FROM acc.bank_staging bs
+        LEFT JOIN acc.vendor_gl_patterns vp 
+            ON bs.description ILIKE '%' || vp.pattern || '%'
+            AND vp.gl_account_code LIKE 'loan:%'
+        WHERE bs.entity = %s
+          AND bs.normalized_date BETWEEN %s AND %s
+          AND bs.gl_account_code = 'TODO'
+          AND (
+              bs.description ILIKE '%MORTGAGE%'
+              OR bs.description ILIKE '%LOAN%'
+              OR vp.gl_account_code IS NOT NULL
+          )
+        ORDER BY bs.normalized_date
+    """
+    return execute_query(query, (entity, start_date, end_date))
+
+
+def get_recurring_vendors(entity, start_date, end_date, min_count=5):
+    """Find vendors with 5+ transactions in period"""
+    query = """
+        SELECT 
+            bs.description,
+            COUNT(*) as cnt,
+            SUM(bs.amount) as total,
+            vp.gl_account_code as suggested_code
+        FROM acc.bank_staging bs
+        LEFT JOIN acc.vendor_gl_patterns vp 
+            ON bs.description ILIKE '%' || vp.pattern || '%'
+            AND vp.entity = bs.entity
+        WHERE bs.entity = %s
+          AND bs.normalized_date BETWEEN %s AND %s
+          AND bs.gl_account_code = 'TODO'
+        GROUP BY bs.description, vp.gl_account_code
+        HAVING COUNT(*) >= %s
+        ORDER BY COUNT(*) DESC
+    """
+    return execute_query(query, (entity, start_date, end_date, min_count))
+
+
+def get_allocation_progress(entity, start_date, end_date):
+    """Get allocation progress statistics"""
+    query = """
+        SELECT 
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE gl_account_code != 'TODO') as allocated,
+            COUNT(*) FILTER (WHERE gl_account_code = 'TODO') as remaining
+        FROM acc.bank_staging
+        WHERE entity = %s
+          AND normalized_date BETWEEN %s AND %s
+    """
+    results = execute_query(query, (entity, start_date, end_date))
+    return results[0] if results else {'total': 0, 'allocated': 0, 'remaining': 0}
+
+
+def assign_intercompany(from_id, to_id, from_entity, to_entity):
+    """Assign intercompany GL codes to both sides of transfer"""
+    # Determine intercompany code based on entity pair
+    entities = sorted([from_entity, to_entity])
+    ic_code = f"ic:{entities[0]}-{entities[1]}"
+    
+    # Update both transactions
+    update_query = """
+        UPDATE acc.bank_staging
+        SET gl_account_code = %s,
+            match_method = 'intercompany',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (%s, %s)
+    """
+    execute_command(update_query, (ic_code, from_id, to_id))
+
+
+def display_progress_bar(allocated, total, width=20):
+    """Display ASCII progress bar"""
+    if total == 0:
+        return "░" * width + " 0%"
+    pct = allocated / total
+    filled = int(width * pct)
+    bar = "█" * filled + "░" * (width - filled)
+    return f"{bar} {pct*100:.0f}%"
+
+
+class WizardState:
+    """Track wizard progress and statistics"""
+    def __init__(self, entity, period, start_date, end_date):
+        self.entity = entity
+        self.period = period
+        self.start_date = start_date
+        self.end_date = end_date
+        self.current_step = 1
+        self.total_steps = 5
+        self.stats = {
+            'intercompany_assigned': 0,
+            'loans_assigned': 0,
+            'recurring_assigned': 0,
+            'manual_assigned': 0,
+            'patterns_created': 0
+        }
+
+
+# ============================================================================
+# Wizard Command
+# ============================================================================
+
+@allocate.command('wizard')
+@click.option('--entity', '-e', required=True, help='Entity code (e.g., bgs)')
+@click.option('--period', '-p', required=True, help='Period: YYYY, YYYY-QN, or YYYY-MM')
+def allocation_wizard(entity, period):
+    """Guided allocation wizard for transaction categorization"""
+    
+    try:
+        start_date, end_date = parse_period(period)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return
+    
+    # Initialize wizard state
+    state = WizardState(entity, period, start_date, end_date)
+    
+    clear_screen()
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+    console.print(f"[bold cyan]   Allocation Wizard - {entity.upper()} - {period}[/bold cyan]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
+    
+    # STEP 1: Import Status
+    console.print(f"[bold cyan]STEP 1 of {state.total_steps}: Import Status[/bold cyan]")
+    console.print("─" * 63)
+    
+    import_status = get_import_status(entity, start_date, end_date)
+    
+    if not import_status:
+        console.print(f"[red]No accounts found for entity: {entity}[/red]\n")
+        return
+    
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Account", style="cyan")
+    table.add_column("Records", justify="right")
+    table.add_column("Date Range", style="white")
+    table.add_column("Status", style="white")
+    
+    for row in import_status:
+        if row['record_count'] > 0:
+            date_range = f"{row['min_date']} → {row['max_date']}"
+            status = "[green]✓ Complete[/green]"
+        else:
+            date_range = ""
+            status = "[red]✗ Not imported[/red]"
+        
+        table.add_row(
+            row['account'],
+            str(row['record_count']),
+            date_range,
+            status
+        )
+    
+    console.print(table)
+    console.print()
+    
+    # Check if we have any imports
+    total_records = sum(row['record_count'] for row in import_status)
+    if total_records == 0:
+        console.print("[red]No transactions imported for this period.[/red]")
+        console.print("[dim]Use 'copilot import' to import bank statements first.[/dim]\n")
+        return
+    
+    action = Prompt.ask(
+        "[i] Import missing    [c] Continue    [q] Quit",
+        choices=['i', 'c', 'q'],
+        default='c'
+    )
+    
+    if action == 'q':
+        console.print("\n[yellow]Wizard cancelled[/yellow]\n")
+        return
+    elif action == 'i':
+        console.print("\n[yellow]Please use 'copilot import' to import missing accounts[/yellow]\n")
+        return
+    
+    # STEP 2: Intercompany Detection
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Intercompany Detection[/bold cyan]")
+    console.print("─" * 63)
+    
+    intercompany = detect_intercompany_transfers(entity, start_date, end_date)
+    
+    if intercompany:
+        console.print(f"[green]Found {len(intercompany)} potential intercompany transfers:[/green]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("From", style="white")
+        table.add_column("To", style="white")
+        table.add_column("Amount", justify="right", style="green")
+        table.add_column("Description", style="white")
+        
+        for row in intercompany[:10]:  # Show first 10
+            table.add_row(
+                str(row['normalized_date']),
+                row['from_entity'],
+                row['to_entity'],
+                f"${abs(row['from_amount']):,.2f}",
+                row['from_desc'][:30]
+            )
+        
+        if len(intercompany) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(intercompany) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        action = Prompt.ask(
+            "[a] Auto-assign intercompany    [r] Review one-by-one    [s] Skip",
+            choices=['a', 'r', 's'],
+            default='a'
+        )
+        
+        if action == 'a':
+            for row in intercompany:
+                assign_intercompany(row['from_id'], row['to_id'], row['from_entity'], row['to_entity'])
+                state.stats['intercompany_assigned'] += 2
+            console.print(f"\n[green]✓ Assigned {len(intercompany)} intercompany transfers ({state.stats['intercompany_assigned']} transactions)[/green]")
+            input("\nPress Enter to continue...")
+        elif action == 'r':
+            console.print("\n[yellow]Review mode not implemented yet. Use auto-assign or skip.[/yellow]")
+            input("\nPress Enter to continue...")
+    else:
+        console.print("[dim]No intercompany transfers detected[/dim]\n")
+        input("Press Enter to continue...")
+    
+    # STEP 3: Loan/Mortgage Payments
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 3 of {state.total_steps}: Loan/Mortgage Payments[/bold cyan]")
+    console.print("─" * 63)
+    
+    loans = detect_loan_payments(entity, start_date, end_date)
+    
+    if loans:
+        console.print(f"[green]Found {len(loans)} potential loan payments:[/green]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("Account", style="white")
+        table.add_column("Payee", style="white")
+        table.add_column("Amount", justify="right", style="red")
+        table.add_column("Suggested", style="yellow")
+        
+        for row in loans[:10]:  # Show first 10
+            suggested = row['suggested_code'] if row['suggested_code'] else "[dim](no pattern)[/dim]"
+            table.add_row(
+                str(row['normalized_date']),
+                row['source_account_code'],
+                row['description'][:25],
+                f"${row['amount']:,.2f}",
+                suggested
+            )
+        
+        if len(loans) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(loans) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        action = Prompt.ask(
+            "[a] Auto-assign loans    [r] Review one-by-one    [s] Skip",
+            choices=['a', 'r', 's'],
+            default='s'
+        )
+        
+        if action == 'a':
+            console.print("\n[yellow]Auto-assign for loans requires manual verification.[/yellow]")
+            console.print("[dim]Please use 'copilot staging assign-todo' for loan payments.[/dim]")
+            input("\nPress Enter to continue...")
+        elif action == 'r':
+            console.print("\n[yellow]Review mode not implemented yet. Use staging commands.[/yellow]")
+            input("\nPress Enter to continue...")
+    else:
+        console.print("[dim]No loan payments detected[/dim]\n")
+        input("Press Enter to continue...")
+    
+    # STEP 4: Recurring Transactions
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 4 of {state.total_steps}: Recurring Transactions[/bold cyan]")
+    console.print("─" * 63)
+    
+    recurring = get_recurring_vendors(entity, start_date, end_date)
+    
+    if recurring:
+        console.print(f"[green]High-frequency vendors (5+ transactions):[/green]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("Vendor", style="white")
+        table.add_column("Count", justify="right")
+        table.add_column("Total", justify="right")
+        table.add_column("Suggested", style="yellow")
+        
+        for idx, row in enumerate(recurring[:15], 1):  # Show first 15
+            amount_style = "green" if row['total'] > 0 else "red"
+            suggested = row['suggested_code'] if row['suggested_code'] else "[dim](no pattern)[/dim]"
+            table.add_row(
+                str(idx),
+                row['description'][:30],
+                str(row['cnt']),
+                f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]",
+                suggested
+            )
+        
+        if len(recurring) > 15:
+            console.print(table)
+            console.print(f"[dim]... and {len(recurring) - 15} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        action = Prompt.ask(
+            "[a] Auto-assign with patterns    [r] Review one-by-one    [s] Skip",
+            choices=['a', 'r', 's'],
+            default='r'
+        )
+        
+        if action == 'a':
+            # Auto-assign only those with existing patterns
+            assigned_count = 0
+            for row in recurring:
+                if row['suggested_code']:
+                    update_query = """
+                        UPDATE acc.bank_staging
+                        SET gl_account_code = %s,
+                            match_method = 'pattern',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE description = %s
+                          AND entity = %s
+                          AND gl_account_code = 'TODO'
+                          AND normalized_date BETWEEN %s AND %s
+                    """
+                    execute_command(update_query, (row['suggested_code'], row['description'], entity, start_date, end_date))
+                    assigned_count += row['cnt']
+                    state.stats['recurring_assigned'] += row['cnt']
+            
+            console.print(f"\n[green]✓ Auto-assigned {assigned_count} recurring transactions[/green]")
+            input("\nPress Enter to continue...")
+        elif action == 'r':
+            console.print("\n[yellow]Please use 'copilot staging assign-todo' for detailed assignment.[/yellow]")
+            input("\nPress Enter to continue...")
+    else:
+        console.print("[dim]No high-frequency vendors detected[/dim]\n")
+        input("Press Enter to continue...")
+    
+    # STEP 5: Remaining Transactions
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 5 of {state.total_steps}: Remaining Transactions[/bold cyan]")
+    console.print("─" * 63)
+    
+    # Import function from staging_cmd
+    from copilot.commands.staging_cmd import get_todo_grouped
+    
+    progress = get_allocation_progress(entity, start_date, end_date)
+    todos = get_todo_grouped(entity)
+    
+    # Filter todos to only those in the period
+    todos_filtered = []
+    for todo in todos:
+        # Check if any transactions for this description are in the period
+        check_query = """
+            SELECT COUNT(*) as cnt
+            FROM acc.bank_staging
+            WHERE description = %s
+              AND entity = %s
+              AND gl_account_code = 'TODO'
+              AND normalized_date BETWEEN %s AND %s
+        """
+        result = execute_query(check_query, (todo['description'], entity, start_date, end_date))
+        if result and result[0]['cnt'] > 0:
+            todos_filtered.append(todo)
+    
+    console.print(f"[bold]Remaining TODO: {progress['remaining']} transactions in {len(todos_filtered)} groups[/bold]\n")
+    
+    progress_bar = display_progress_bar(progress['allocated'], progress['total'])
+    console.print(f"Progress: {progress_bar}\n")
+    
+    if todos_filtered:
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("Description", style="white")
+        table.add_column("Count", justify="right")
+        table.add_column("Total", justify="right")
+        
+        for idx, row in enumerate(todos_filtered[:10], 1):  # Show first 10
+            amount_style = "green" if row['total'] > 0 else "red"
+            table.add_row(
+                str(idx),
+                row['description'][:40],
+                str(row['cnt']),
+                f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]"
+            )
+        
+        if len(todos_filtered) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(todos_filtered) - 10} more groups[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        console.print("[yellow]Use 'copilot staging assign-todo --entity {}' for interactive assignment[/yellow]\n".format(entity))
+    else:
+        console.print("[green]✓ All transactions allocated![/green]\n")
+    
+    input("[Enter] to view summary    [q] Quit")
+    
+    # Summary Screen
+    clear_screen()
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+    console.print("[bold cyan]   Allocation Complete![/bold cyan]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
+    
+    console.print(f"[bold]Summary for {entity.upper()} - {period}:[/bold]\n")
+    
+    final_progress = get_allocation_progress(entity, start_date, end_date)
+    
+    console.print(f"  Total transactions:      {final_progress['total']}")
+    console.print(f"  Allocated:               {final_progress['allocated']} ({final_progress['allocated']/final_progress['total']*100 if final_progress['total'] > 0 else 0:.0f}%)")
+    console.print(f"  Remaining:               {final_progress['remaining']}\n")
+    
+    console.print("  [bold]By category:[/bold]")
+    console.print(f"    Intercompany:           {state.stats['intercompany_assigned']}")
+    console.print(f"    Loan payments:          {state.stats['loans_assigned']}")
+    console.print(f"    Recurring:              {state.stats['recurring_assigned']}")
+    console.print(f"    Manual:                 {state.stats['manual_assigned']}")
+    console.print()
+    console.print(f"  Patterns created:         {state.stats['patterns_created']}\n")
+    
+    console.print("[dim]Use 'copilot report' to generate reports or 'copilot staging' for more details[/dim]\n")
