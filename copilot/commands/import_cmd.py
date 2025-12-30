@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Confirm
 from copilot.db import execute_query, get_connection
+from copilot.utils import parse_period
 
 console = Console()
 
@@ -201,7 +202,13 @@ def show_import_help():
     
     # Syntax
     console.print("[bold]SYNTAX:[/bold]")
-    console.print("  copilot import csv <file> --account <code> --dry-run\n")
+    console.print("  copilot import csv <file> --account <code> [--period <period>] [--dry-run]\n")
+    
+    # Period format
+    console.print("[bold]PERIOD FORMAT:[/bold]")
+    console.print("  YYYY       Year (e.g., 2024)")
+    console.print("  YYYY-QN    Quarter (e.g., 2024-Q4)")
+    console.print("  YYYY-MM    Month (e.g., 2024-12)\n")
     
     # Available accounts
     console.print("[bold]AVAILABLE ACCOUNTS:[/bold]")
@@ -250,7 +257,8 @@ def show_import_help():
     console.print("  2. Preview import: copilot import csv <file> --account <code> --dry-run")
     console.print("  3. Review the transaction preview")
     console.print("  4. Run without --dry-run to import: copilot import csv <file> --account <code>")
-    console.print("  5. Run allocation wizard: copilot allocate wizard --period <year>\n")
+    console.print("  5. Optional: Add --period to filter transactions (e.g., --period 2024-Q4)")
+    console.print("  6. Run allocation wizard: copilot allocate wizard --period <year>\n")
 
 
 @click.group(name='import', invoke_without_command=True)
@@ -265,20 +273,27 @@ def import_cmd(ctx):
 @import_cmd.command('csv')
 @click.argument('file', type=click.Path(exists=True))
 @click.option('--account', '-a', required=True, help='Account code (e.g., bgs:checking)')
+@click.option('--period', '-p', required=False, help='Period filter: YYYY, YYYY-QN, or YYYY-MM')
 @click.option('--dry-run', is_flag=True, help='Preview without importing')
-def import_csv(file, account, dry_run):
+def import_csv(file, account, period, dry_run):
     """Import transactions from CSV file.
     
     SYNTAX:
-      copilot import csv <file> --account <code> --dry-run
+      copilot import csv <file> --account <code> [--period <period>] [--dry-run]
       copilot import csv <file> --account <code>
+    
+    PERIOD FORMATS:
+      YYYY      -> Jan 1 to Dec 31 (e.g., 2024)
+      YYYY-QN   -> Quarter start to end (e.g., 2024-Q4)
+      YYYY-MM   -> Month start to end (e.g., 2024-12)
     
     WORKFLOW:
       1. Check available accounts: copilot import
       2. Preview import: copilot import csv statement.csv --account bgs:checking --dry-run
       3. Review the transaction preview
       4. Import: copilot import csv statement.csv --account bgs:checking
-      5. Run allocation wizard: copilot allocate wizard --period <year>
+      5. Optional: Filter by period: copilot import csv statement.csv --account bgs:checking --period 2024-Q4
+      6. Run allocation wizard: copilot allocate wizard --period <year>
     """
     
     clear_screen()
@@ -408,6 +423,29 @@ def import_csv(file, account, dry_run):
     if not transactions:
         console.print("[yellow]No valid transactions found in file[/yellow]")
         return
+    
+    # Apply period filter if specified
+    if period:
+        start_date, end_date = parse_period(period)
+        if not start_date:
+            console.print(f"[red]Error: Invalid period format '{period}'[/red]")
+            console.print("Valid formats: YYYY, YYYY-QN, YYYY-MM")
+            console.print("Examples: 2024, 2024-Q4, 2024-12")
+            return
+        
+        console.print(f"[bold]Period Filter:[/bold] {period} ({start_date} → {end_date})\n")
+        
+        # Filter transactions
+        original_count = len(transactions)
+        transactions = [t for t in transactions if start_date <= t['trans_date'] <= end_date]
+        filtered_count = original_count - len(transactions)
+        
+        if filtered_count > 0:
+            console.print(f"[yellow]Filtered out {filtered_count} transactions outside period[/yellow]\n")
+        
+        if not transactions:
+            console.print("[yellow]No transactions found within the specified period[/yellow]")
+            return
     
     # Extract entity from account code
     entity = extract_entity(account)

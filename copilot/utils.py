@@ -2,6 +2,8 @@
 Utility functions for Copilot
 """
 import re
+import calendar
+from datetime import date
 
 def sanitize_for_directory(text, max_length=30):
     """
@@ -97,3 +99,45 @@ def get_project_directory(client_code, project_code, project_name=None):
         return project_path
     
     return None
+
+
+def parse_period(period_str):
+    """Parse period string into start and end dates.
+    
+    Formats:
+        YYYY      -> Jan 1 to Dec 31
+        YYYY-QN   -> Quarter start to quarter end
+        YYYY-MM   -> Month start to month end
+    
+    Returns:
+        tuple: (start_date, end_date) or (None, None) if invalid
+    """
+    if not period_str:
+        return None, None
+    
+    # Annual: 2024
+    if re.match(r'^\d{4}$', period_str):
+        year = int(period_str)
+        return date(year, 1, 1), date(year, 12, 31)
+    
+    # Quarterly: 2024-Q1, 2024-Q2, 2024-Q3, 2024-Q4
+    match = re.match(r'^(\d{4})-Q([1-4])$', period_str, re.IGNORECASE)
+    if match:
+        year = int(match.group(1))
+        quarter = int(match.group(2))
+        quarter_starts = {1: (1, 1), 2: (4, 1), 3: (7, 1), 4: (10, 1)}
+        quarter_ends = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+        start_month, start_day = quarter_starts[quarter]
+        end_month, end_day = quarter_ends[quarter]
+        return date(year, start_month, start_day), date(year, end_month, end_day)
+    
+    # Monthly: 2024-01, 2024-12
+    match = re.match(r'^(\d{4})-(\d{2})$', period_str)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        if 1 <= month <= 12:
+            last_day = calendar.monthrange(year, month)[1]
+            return date(year, month, 1), date(year, month, last_day)
+    
+    return None, None
