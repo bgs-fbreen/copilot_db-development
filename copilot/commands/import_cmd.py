@@ -232,9 +232,13 @@ def show_import_help():
     csv_files = sorted(glob.glob("*.csv"))
     if csv_files:
         for csv_file in csv_files:
-            file_size = os.path.getsize(csv_file)
-            size_kb = file_size / 1024
-            console.print(f"  [green]{csv_file}[/green] ({size_kb:.1f} KB)")
+            try:
+                file_size = os.path.getsize(csv_file)
+                size_kb = file_size / 1024
+                console.print(f"  [green]{csv_file}[/green] ({size_kb:.1f} KB)")
+            except OSError:
+                # File might have been deleted between glob and getsize
+                console.print(f"  [green]{csv_file}[/green]")
     else:
         console.print("  [yellow]No CSV files found in current directory[/yellow]")
     
