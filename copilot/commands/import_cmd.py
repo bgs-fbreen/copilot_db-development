@@ -3,6 +3,7 @@ Bank import command - Import bank transactions from CSV files
 """
 import click
 import csv
+import glob
 import hashlib
 import os
 from datetime import datetime
@@ -192,24 +193,88 @@ def is_duplicate_transaction(account_code, trans_date, amount, description):
     return result[0]['count'] > 0
 
 
-@click.group(name='import')
-def import_cmd():
+def show_import_help():
+    """Show comprehensive import help with accounts and CSV files"""
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+    console.print("[bold cyan]   Bank Transaction Import[/bold cyan]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
+    
+    # Syntax
+    console.print("[bold]SYNTAX:[/bold]")
+    console.print("  copilot import csv <file> --account <code> --dry-run\n")
+    
+    # Available accounts
+    console.print("[bold]AVAILABLE ACCOUNTS:[/bold]")
+    try:
+        accounts = execute_query("""
+            SELECT code, name, institution 
+            FROM acc.bank_account 
+            WHERE status = 'active'
+            ORDER BY code
+        """)
+        
+        if accounts:
+            # Find max code length for alignment
+            max_code_len = max(len(acc['code']) for acc in accounts)
+            
+            for acc in accounts:
+                institution_str = f" ({acc['institution']})" if acc.get('institution') else ""
+                console.print(f"  [cyan]{acc['code']:<{max_code_len}}[/cyan]  {acc['name']}{institution_str}")
+        else:
+            console.print("  [yellow]No active accounts found[/yellow]")
+    except Exception as e:
+        console.print(f"  [yellow]Could not fetch accounts: {e}[/yellow]")
+    
+    console.print()
+    
+    # CSV files in current directory
+    console.print("[bold]CSV FILES IN CURRENT DIRECTORY:[/bold]")
+    csv_files = sorted(glob.glob("*.csv"))
+    if csv_files:
+        for csv_file in csv_files:
+            file_size = os.path.getsize(csv_file)
+            size_kb = file_size / 1024
+            console.print(f"  [green]{csv_file}[/green] ({size_kb:.1f} KB)")
+    else:
+        console.print("  [yellow]No CSV files found in current directory[/yellow]")
+    
+    console.print()
+    
+    # Workflow
+    console.print("[bold]WORKFLOW:[/bold]")
+    console.print("  1. Check available accounts above")
+    console.print("  2. Preview import: copilot import csv <file> --account <code> --dry-run")
+    console.print("  3. Review the transaction preview")
+    console.print("  4. Run without --dry-run to import: copilot import csv <file> --account <code>")
+    console.print("  5. Run allocation wizard: copilot allocate wizard --period 2024\n")
+
+
+@click.group(name='import', invoke_without_command=True)
+@click.pass_context
+def import_cmd(ctx):
     """Import bank transactions from files"""
-    pass
+    if ctx.invoked_subcommand is None:
+        # Show comprehensive help when no subcommand given
+        show_import_help()
 
 
 @import_cmd.command('csv')
 @click.argument('file', type=click.Path(exists=True))
-@click.option('--account', '-a', required=True, help='Bank account code')
-@click.option('--dry-run', is_flag=True, help='Preview import without saving')
+@click.option('--account', '-a', required=True, help='Account code (e.g., bgs:checking)')
+@click.option('--dry-run', is_flag=True, help='Preview without importing')
 def import_csv(file, account, dry_run):
     """Import transactions from CSV file.
     
-    Usage: copilot import csv <file> --account <account_code> [--dry-run]
+    SYNTAX:
+      copilot import csv <file> --account <code> --dry-run
+      copilot import csv <file> --account <code>
     
-    Examples:
-        copilot import csv ~/Downloads/statement.csv --account bgs:account --dry-run
-        copilot import csv ~/Downloads/statement.csv --account bgs:account
+    WORKFLOW:
+      1. Check available accounts: copilot import
+      2. Preview import: copilot import csv statement.csv --account bgs:checking --dry-run
+      3. Review the transaction preview
+      4. Import: copilot import csv statement.csv --account bgs:checking
+      5. Run allocation wizard: copilot allocate wizard --period 2024
     """
     
     clear_screen()
