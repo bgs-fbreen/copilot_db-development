@@ -200,33 +200,68 @@ def show_import_help():
     console.print("[bold cyan]   Bank Transaction Import[/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
     
-    # Syntax
-    console.print("[bold]SYNTAX:[/bold]")
-    console.print("  copilot import csv <file> --account <code> [--period <period>] [--dry-run]\n")
-    
-    # Period format
-    console.print("[bold]PERIOD FORMAT:[/bold]")
-    console.print("  YYYY       Year (e.g., 2024)")
-    console.print("  YYYY-QN    Quarter (e.g., 2024-Q4)")
-    console.print("  YYYY-MM    Month (e.g., 2024-12)\n")
-    
-    # Available accounts
-    console.print("[bold]AVAILABLE ACCOUNTS:[/bold]")
+    # Account Import Status Table
+    console.print("[bold]ACCOUNT IMPORT STATUS:[/bold]")
+    console.print("───────────────────────────────────────────────────────────────")
     try:
+        # Query for account status with import statistics
         accounts = execute_query("""
-            SELECT code, name, institution 
-            FROM acc.bank_account 
-            WHERE status = 'active'
-            ORDER BY code
+            SELECT 
+                ba.code,
+                ba.name,
+                ba.institution,
+                COALESCE(COUNT(bs.id), 0) as record_count,
+                MIN(bs.normalized_date) as earliest_date,
+                MAX(bs.normalized_date) as latest_date
+            FROM acc.bank_account ba
+            LEFT JOIN acc.bank_staging bs ON bs.source_account_code = ba.code
+            WHERE ba.status = 'active'
+            GROUP BY ba.code, ba.name, ba.institution
+            ORDER BY ba.code
         """)
         
         if accounts:
-            # Find max code length for alignment
-            max_code_len = max(len(acc['code']) for acc in accounts)
+            # Create the status table with box drawing
+            from rich.box import HEAVY_HEAD
+            table = Table(show_header=True, header_style="bold magenta", box=HEAVY_HEAD)
+            table.add_column("#", style="cyan", justify="right")
+            table.add_column("Entity", style="white")
+            table.add_column("Account", style="cyan")
+            table.add_column("Records", justify="right", style="white")
+            table.add_column("Date Range", style="white")
+            table.add_column("Status", style="white")
             
-            for acc in accounts:
-                institution_str = f" ({acc['institution']})" if acc.get('institution') else ""
-                console.print(f"  [cyan]{acc['code']:<{max_code_len}}[/cyan]  {acc['name']}{institution_str}")
+            for idx, acc in enumerate(accounts, 1):
+                entity = extract_entity(acc['code'])
+                record_count = acc['record_count']
+                
+                # Format date range
+                if acc['earliest_date'] and acc['latest_date']:
+                    date_range = f"{acc['earliest_date']} → {acc['latest_date']}"
+                else:
+                    date_range = ""
+                
+                # Determine status
+                if record_count == 0:
+                    # Check if this is a skip case (no transactions in current year)
+                    # For now, we'll just mark as not imported
+                    status = "✗ Not imported"
+                    status_color = "red"
+                else:
+                    # Has some records, mark as partial
+                    status = "⚠ Partial"
+                    status_color = "yellow"
+                
+                table.add_row(
+                    str(idx),
+                    entity,
+                    acc['code'],
+                    str(record_count),
+                    date_range,
+                    f"[{status_color}]{status}[/{status_color}]"
+                )
+            
+            console.print(table)
         else:
             console.print("  [yellow]No active accounts found[/yellow]")
     except Exception as e:
@@ -235,30 +270,29 @@ def show_import_help():
     console.print()
     
     # CSV files in current directory
+    console.print("───────────────────────────────────────────────────────────────")
     console.print("[bold]CSV FILES IN CURRENT DIRECTORY:[/bold]")
+    console.print("───────────────────────────────────────────────────────────────")
     csv_files = sorted(glob.glob("*.csv"))
     if csv_files:
         for csv_file in csv_files:
             try:
                 file_size = os.path.getsize(csv_file)
                 size_kb = file_size / 1024
-                console.print(f"  [green]{csv_file}[/green] ({size_kb:.1f} KB)")
+                console.print(f"  {csv_file:<30} ({size_kb:.0f} KB)")
             except OSError:
                 # File might have been deleted between glob and getsize
-                console.print(f"  [green]{csv_file}[/green]")
+                console.print(f"  {csv_file}")
     else:
         console.print("  [yellow]No CSV files found in current directory[/yellow]")
     
     console.print()
     
-    # Workflow
-    console.print("[bold]WORKFLOW:[/bold]")
-    console.print("  1. Check available accounts above")
-    console.print("  2. Preview import: copilot import csv <file> --account <code> --dry-run")
-    console.print("  3. Review the transaction preview")
-    console.print("  4. Run without --dry-run to import: copilot import csv <file> --account <code>")
-    console.print("  5. Optional: Add --period to filter transactions (e.g., --period 2024-Q4)")
-    console.print("  6. Run allocation wizard: copilot allocate wizard --period <year>\n")
+    # Import syntax
+    console.print("───────────────────────────────────────────────────────────────")
+    console.print("[bold]IMPORT SYNTAX:[/bold]")
+    console.print("───────────────────────────────────────────────────────────────\n")
+    console.print("  copilot import csv <file> --account <code> [--period <period>]\n")
 
 
 @click.group(name='import', invoke_without_command=True)
