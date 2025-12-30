@@ -246,7 +246,7 @@ def show_import_help():
     console.print("  2. Preview import: copilot import csv <file> --account <code> --dry-run")
     console.print("  3. Review the transaction preview")
     console.print("  4. Run without --dry-run to import: copilot import csv <file> --account <code>")
-    console.print("  5. Run allocation wizard: copilot allocate wizard --period 2024\n")
+    console.print("  5. Run allocation wizard: copilot allocate wizard --period <year>\n")
 
 
 @click.group(name='import', invoke_without_command=True)
@@ -274,7 +274,7 @@ def import_csv(file, account, dry_run):
       2. Preview import: copilot import csv statement.csv --account bgs:checking --dry-run
       3. Review the transaction preview
       4. Import: copilot import csv statement.csv --account bgs:checking
-      5. Run allocation wizard: copilot allocate wizard --period 2024
+      5. Run allocation wizard: copilot allocate wizard --period <year>
     """
     
     clear_screen()
