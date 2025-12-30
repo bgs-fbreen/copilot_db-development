@@ -8,6 +8,10 @@ from copilot.db import execute_query, execute_command
 
 console = Console()
 
+# Constants
+MAX_DESCRIPTION_LENGTH = 50
+MAX_KEYWORD_LENGTH = 30
+
 def clear_screen():
     """Clear the terminal screen"""
     os.system('clear' if os.name != 'nt' else 'cls')
@@ -73,7 +77,11 @@ def get_gl_usage_stats(entity):
 
 
 def assign_gl_code(description, gl_code, entity, notes=None):
-    """Update all matching transactions and create pattern"""
+    """Update all matching transactions and create/update pattern
+    
+    Returns:
+        tuple: (count of updated transactions, 'created' or 'updated' for pattern)
+    """
     
     # Update bank_staging
     update_query = """
@@ -110,6 +118,8 @@ def assign_gl_code(description, gl_code, entity, notes=None):
     """
     existing = execute_query(check_query, (pattern, entity))
     
+    pattern_action = 'updated' if existing else 'created'
+    
     if existing:
         # Update existing pattern
         update_pattern_query = """
@@ -128,7 +138,7 @@ def assign_gl_code(description, gl_code, entity, notes=None):
         """
         execute_command(insert_pattern_query, (pattern, gl_code, entity, notes))
     
-    return count
+    return count, pattern_action
 
 
 def list_gl_codes(filter_type=None):
@@ -469,9 +479,13 @@ def assign_todo(entity):
         
         for idx, row in enumerate(todos, 1):
             amount_style = "green" if row['total'] > 0 else "red"
+            desc = row['description']
+            # Truncate with ellipsis only if needed
+            if len(desc) > MAX_DESCRIPTION_LENGTH:
+                desc = desc[:MAX_DESCRIPTION_LENGTH] + "..."
             table.add_row(
                 str(idx),
-                row['description'][:50],
+                desc,
                 str(row['cnt']),
                 f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]"
             )
@@ -524,14 +538,20 @@ def assign_todo(entity):
             console.print()
         else:
             console.print("[dim] From your existing patterns:[/dim]")
-            console.print(f"[dim]   (none found for \"{description[:40]}...\")[/dim]\n")
+            truncated_desc = description[:MAX_DESCRIPTION_LENGTH]
+            if len(description) > MAX_DESCRIPTION_LENGTH:
+                truncated_desc += "..."
+            console.print(f"[dim]   (none found for \"{truncated_desc}\")[/dim]\n")
         
         # 2. Show similar historical assignments
         similar = get_similar_assignments(description, entity)
         if similar:
             console.print("[bold white] From similar transactions you've assigned:[/bold white]")
             for sim in similar:
-                console.print(f"   • \"{sim['description'][:40]}...\" → [cyan]{sim['gl_account_code']}[/cyan] ({sim['cnt']} transactions)")
+                sim_desc = sim['description'][:MAX_DESCRIPTION_LENGTH]
+                if len(sim['description']) > MAX_DESCRIPTION_LENGTH:
+                    sim_desc += "..."
+                console.print(f"   • \"{sim_desc}\" → [cyan]{sim['gl_account_code']}[/cyan] ({sim['cnt']} transactions)")
             console.print()
         
         # 3. Show most-used GL codes
@@ -562,7 +582,10 @@ def assign_todo(entity):
             if suggestions:
                 console.print("[bold white] Keyword matches:[/bold white]")
                 for suggestion in set(suggestions):
-                    console.print(f"   • \"{keywords[:30]}...\" → [cyan]{suggestion}[/cyan]")
+                    truncated_keywords = keywords[:MAX_KEYWORD_LENGTH]
+                    if len(keywords) > MAX_KEYWORD_LENGTH:
+                        truncated_keywords += "..."
+                    console.print(f"   • \"{truncated_keywords}\" → [cyan]{suggestion}[/cyan]")
                 console.print()
         
         console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
@@ -595,10 +618,10 @@ def assign_todo(entity):
         
         # Assign the GL code
         try:
-            updated_count = assign_gl_code(description, gl_code, entity, user_context or None)
+            updated_count, pattern_action = assign_gl_code(description, gl_code, entity, user_context or None)
             
             console.print(f"\n[green]✓ Updated {updated_count} transactions → {gl_code}[/green]")
-            console.print(f"[green]✓ Created pattern: \"{description}\" → {gl_code}[/green]")
+            console.print(f"[green]✓ {pattern_action.capitalize()} pattern: \"{description}\" → {gl_code}[/green]")
             if user_context:
                 console.print(f"[green]✓ Saved note: \"{user_context}\"[/green]")
             
