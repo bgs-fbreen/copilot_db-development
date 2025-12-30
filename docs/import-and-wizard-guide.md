@@ -25,56 +25,36 @@ This two-step process ensures accurate financial data entry while minimizing man
 
 ### High-Level Workflow
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Import & Allocation Flow                  │
-└─────────────────────────────────────────────────────────────┘
+The following diagram illustrates the complete three-step workflow from importing bank data to generating journal entries:
 
-  Step 1: Import Bank Data
-  ┌──────────────────────┐
-  │  CSV Files           │
-  │  (Bank Statements)   │
-  └──────────┬───────────┘
-             │
-             ↓
-  ┌──────────────────────┐
-  │  copilot import csv  │
-  │  --account <code>    │
-  └──────────┬───────────┘
-             │
-             ↓
-  ┌──────────────────────┐
-  │  bank_staging table  │
-  │  (GL: 'TODO')        │
-  └──────────┬───────────┘
-
-  Step 2: Allocate Transactions
-             │
-             ↓
-  ┌─────────────────────────────┐
-  │  copilot allocate wizard    │
-  │  --period <year>            │
-  └─────────┬───────────────────┘
-            │
-            ├─→ Import Status Check
-            ├─→ Intercompany Detection
-            ├─→ Loan/Mortgage Detection
-            ├─→ Recurring Vendor Detection
-            └─→ Manual Assignment (staging)
-                    │
-                    ↓
-            ┌──────────────────┐
-            │  bank_staging    │
-            │  (GL: assigned)  │
-            └──────────────────┘
-
-  Step 3: Generate Accounting Entries
-                    │
-                    ↓
-            ┌──────────────────┐
-            │  copilot trial   │
-            │  generate        │
-            └──────────────────┘
+```mermaid
+flowchart TB
+    subgraph Import["Step 1: Import Bank Data"]
+        CSV[("CSV Files<br/>(Bank Statements)")]
+        CMD1["copilot import csv<br/>--account 'code'"]
+        STAGING1[("bank_staging<br/>GL: 'TODO'")]
+        CSV --> CMD1 --> STAGING1
+    end
+    
+    subgraph Allocate["Step 2: Allocate Transactions"]
+        CMD2["copilot allocate wizard<br/>--period 'year'"]
+        S1["Import Status Check"]
+        S2["Intercompany Detection"]
+        S3["Loan/Mortgage Detection"]
+        S4["Recurring Vendor Detection"]
+        S5["Manual Assignment"]
+        STAGING2[("bank_staging<br/>GL: assigned")]
+        
+        CMD2 --> S1 --> S2 --> S3 --> S4 --> S5 --> STAGING2
+    end
+    
+    subgraph Post["Step 3: Generate Entries"]
+        CMD3["copilot trial generate"]
+        JOURNAL[("Journal Entries")]
+        STAGING2 --> CMD3 --> JOURNAL
+    end
+    
+    STAGING1 --> CMD2
 ```
 
 ---
@@ -164,6 +144,21 @@ copilot import csv <file> --account <code> [--period <period>] [--dry-run]
   - **Month**: `YYYY-MM` (e.g., `2024-12`)
     - Includes first to last day of month
 
+**Period Format Reference:**
+
+```mermaid
+flowchart LR
+    subgraph Periods["Period Formats"]
+        YEAR["2024<br/>Full Year"]
+        Q["2024-Q4<br/>Quarter"]
+        MONTH["2024-12<br/>Month"]
+    end
+    
+    YEAR --> YR["Jan 1 - Dec 31"]
+    Q --> QR["Oct 1 - Dec 31"]
+    MONTH --> MR["Dec 1 - Dec 31"]
+```
+
 - **`--dry-run`** - Preview import without saving
   - Shows detailed statistics
   - Identifies duplicates
@@ -195,6 +190,33 @@ The import command **automatically detects** CSV column formats. It recognizes c
 - Text: `Jan 15, 2024`, `January 15, 2024`
 
 ### Import Process
+
+The import process follows a comprehensive validation and parsing workflow:
+
+```mermaid
+flowchart TD
+    START([Start Import]) --> VALIDATE{Account<br/>Exists?}
+    VALIDATE -->|No| ERROR1[Show Error<br/>List Accounts]
+    VALIDATE -->|Yes| HASH[Compute File Hash]
+    HASH --> DUP{Previously<br/>Imported?}
+    DUP -->|Yes| WARN[Warning:<br/>Already Imported]
+    WARN --> CONFIRM1{Continue?}
+    CONFIRM1 -->|No| CANCEL([Cancelled])
+    CONFIRM1 -->|Yes| DETECT
+    DUP -->|No| DETECT[Detect CSV Format]
+    DETECT --> PARSE[Parse Transactions]
+    PARSE --> FILTER{Period<br/>Filter?}
+    FILTER -->|Yes| APPLY[Filter by Date Range]
+    FILTER -->|No| PREVIEW
+    APPLY --> PREVIEW[Preview Transactions]
+    PREVIEW --> DRYRUN{Dry Run?}
+    DRYRUN -->|Yes| STATS[Show Statistics] --> DONE([Done])
+    DRYRUN -->|No| CONFIRM2{Confirm<br/>Import?}
+    CONFIRM2 -->|No| CANCEL
+    CONFIRM2 -->|Yes| INSERT[Insert to bank_staging]
+    INSERT --> LOG[Log Import]
+    LOG --> SUCCESS([Success!])
+```
 
 #### Step 1: Validation
 - Verifies account exists in database
@@ -398,6 +420,20 @@ copilot allocate wizard --period <period> [--entity <code>]
 
 The wizard guides you through **5 comprehensive steps**:
 
+```mermaid
+flowchart LR
+    subgraph Wizard["Allocation Wizard Steps"]
+        direction LR
+        STEP1["Step 1<br/>Import Status"]
+        STEP2["Step 2<br/>Intercompany"]
+        STEP3["Step 3<br/>Loans"]
+        STEP4["Step 4<br/>Recurring"]
+        STEP5["Step 5<br/>Summary"]
+        
+        STEP1 --> STEP2 --> STEP3 --> STEP4 --> STEP5
+    end
+```
+
 #### Step 1: Import Status
 
 **Purpose**: Verify that bank statements have been imported for the period.
@@ -448,6 +484,24 @@ Enter command [c]: c
 - Opposite signs (debit from one, credit to other)
 - Different entities
 - Both transactions unallocated (gl_account_code = 'TODO')
+
+**Intercompany Matching Example:**
+
+```mermaid
+flowchart LR
+    subgraph Entity1["Entity: BGS"]
+        T1["Transaction<br/>-$5,000<br/>Jan 15"]
+    end
+    
+    subgraph Entity2["Entity: MHB"]
+        T2["Transaction<br/>+$5,000<br/>Jan 15"]
+    end
+    
+    T1 <-->|"Matched as<br/>Intercompany"| T2
+    
+    T1 --> IC1["GL: ic:bgs-mhb"]
+    T2 --> IC2["GL: ic:bgs-mhb"]
+```
 
 **Assignment**:
 - Creates intercompany GL code: `ic:entity1-entity2`
@@ -618,6 +672,27 @@ Summary for BGS - 2024:
 Use 'copilot report' to generate reports or 'copilot staging' for more details
 ```
 
+### Transaction State Flow
+
+The following state diagram shows how transactions move through different states during the allocation process:
+
+```mermaid
+stateDiagram-v2
+    [*] --> TODO: Import CSV
+    TODO --> Intercompany: Wizard Step 2
+    TODO --> Loan: Wizard Step 3
+    TODO --> Recurring: Wizard Step 4
+    TODO --> Manual: Manual Assignment
+    
+    Intercompany --> Allocated
+    Loan --> Allocated
+    Recurring --> Allocated
+    Manual --> Allocated
+    
+    Allocated --> Posted: Generate & Post
+    Posted --> [*]
+```
+
 ---
 
 ## Complete Workflow Examples
@@ -625,6 +700,37 @@ Use 'copilot report' to generate reports or 'copilot staging' for more details
 ### Example 1: Monthly Bank Reconciliation
 
 **Scenario**: Import and allocate January 2024 transactions for BGS entity.
+
+**Visual Workflow:**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Import as copilot import
+    participant DB as Database
+    participant Wizard as copilot allocate wizard
+    participant Trial as copilot trial
+    
+    User->>Import: csv file.csv --account bgs:checking --dry-run
+    Import->>User: Preview (no changes)
+    User->>Import: csv file.csv --account bgs:checking
+    Import->>DB: Insert to bank_staging (GL='TODO')
+    Import->>User: Success!
+    
+    User->>Wizard: wizard --period 2024-01
+    Wizard->>DB: Check import status
+    Wizard->>DB: Detect intercompany
+    Wizard->>DB: Detect loans
+    Wizard->>DB: Detect recurring
+    Wizard->>User: Summary
+    
+    User->>Trial: generate --entity bgs
+    Trial->>DB: Create trial entries
+    User->>Trial: validate
+    Trial->>User: Validation results
+```
+
+**Commands:**
 
 ```bash
 # Step 1: Preview the import
