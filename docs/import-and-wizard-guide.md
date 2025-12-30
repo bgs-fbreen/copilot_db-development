@@ -60,12 +60,16 @@ flowchart TB
         REPORTS["Reports &<br/>Trial Balance"]
     end
 
-    CSV1 & CSV2 & CSV3 --> CMD1
+    CSV1 --> CMD1
+    CSV2 --> CMD1
+    CSV3 --> CMD1
     CMD1 --> STAGING
     STAGING --> CHECK
     CHECK -->|Yes| Auto
     CHECK -->|No| SKIP[Skip Account]
-    IC & LOAN & REC --> ALLOCATED
+    IC --> ALLOCATED
+    LOAN --> ALLOCATED
+    REC --> ALLOCATED
     Auto --> MANUAL
     MANUAL --> ALLOCATED
     ALLOCATED --> TRIAL
@@ -615,7 +619,8 @@ flowchart LR
     T1 --> COMPARE
     T2 --> COMPARE
     MATCHED --> IC
-    IC --> T1_DONE & T2_DONE
+    IC --> T1_DONE
+    IC --> T2_DONE
 ```
 
 **Assignment**:
