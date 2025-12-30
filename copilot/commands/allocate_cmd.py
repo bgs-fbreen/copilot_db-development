@@ -509,9 +509,11 @@ def parse_period(period):
 
 
 def get_import_status(entity, start_date, end_date, period):
-    """Get import status for all accounts belonging to entity"""
-    query = """
+    """Get import status for accounts. If entity is None, return all entities."""
+    
+    base_query = """
         SELECT 
+            ba.entity,
             ba.code as account,
             ba.name as account_name,
             COUNT(bs.id) as record_count,
@@ -526,11 +528,23 @@ def get_import_status(entity, start_date, end_date, period):
         LEFT JOIN acc.wizard_account_status was
             ON was.account_code = ba.code
             AND was.period = %s
-        WHERE ba.entity = %s
-        GROUP BY ba.code, ba.name, was.status, was.reason
-        ORDER BY ba.code
     """
-    return execute_query(query, (start_date, end_date, period, entity))
+    
+    params = [start_date, end_date, period]
+    
+    if entity:
+        base_query += " WHERE ba.entity = %s"
+        params.append(entity)
+    else:
+        # Exclude accounts with NULL entity
+        base_query += " WHERE ba.entity IS NOT NULL"
+    
+    base_query += """
+        GROUP BY ba.entity, ba.code, ba.name, was.status, was.reason
+        ORDER BY ba.entity, ba.code
+    """
+    
+    return execute_query(base_query, tuple(params))
 
 
 def skip_account(account_code, entity, period, reason=None):
@@ -564,7 +578,8 @@ def get_skipped_accounts(entity, period):
 
 
 def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
-    """Find potential intercompany transfers - matching amounts on same date, opposite signs"""
+    """Find potential intercompany transfers - matching amounts on same date, opposite signs.
+    If entity is None, find transfers across ALL entities."""
     
     base_query = """
         SELECT 
@@ -587,18 +602,23 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
             AND a.id < b.id
         WHERE a.amount < 0
           AND a.normalized_date BETWEEN %s AND %s
-          AND (a.entity = %s OR b.entity = %s)
           AND a.gl_account_code = 'TODO'
           AND b.gl_account_code = 'TODO'
     """
     
-    params = [start_date, end_date, entity, entity]
+    params = [start_date, end_date]
+    
+    # If specific entity, filter to transfers involving that entity
+    if entity:
+        base_query += " AND (a.entity = %s OR b.entity = %s)"
+        params.extend([entity, entity])
     
     # Filter by active accounts if provided
     # Note: active_accounts list comes from trusted database query results
     if active_accounts:
         placeholders = ','.join(['%s'] * len(active_accounts))
-        base_query += f" AND a.source_account_code IN ({placeholders})"
+        base_query += f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
+        params.extend(active_accounts)
         params.extend(active_accounts)
     
     base_query += " ORDER BY a.normalized_date"
@@ -607,11 +627,12 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
 
 
 def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
-    """Find potential loan payments based on known loan vendors"""
+    """Find potential loan payments. If entity is None, search all entities."""
     
     base_query = """
         SELECT 
             bs.id,
+            bs.entity,
             bs.normalized_date,
             bs.source_account_code,
             bs.description,
@@ -621,8 +642,7 @@ def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
         LEFT JOIN acc.vendor_gl_patterns vp 
             ON bs.description ILIKE '%' || vp.pattern || '%'
             AND vp.gl_account_code LIKE 'loan:%'
-        WHERE bs.entity = %s
-          AND bs.normalized_date BETWEEN %s AND %s
+        WHERE bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
           AND (
               bs.description ILIKE '%MORTGAGE%'
@@ -631,7 +651,11 @@ def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
           )
     """
     
-    params = [entity, start_date, end_date]
+    params = [start_date, end_date]
+    
+    if entity:
+        base_query += " AND bs.entity = %s"
+        params.append(entity)
     
     # Filter by active accounts if provided
     # Note: active_accounts list comes from trusted database query results
@@ -640,16 +664,17 @@ def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
         base_query += f" AND bs.source_account_code IN ({placeholders})"
         params.extend(active_accounts)
     
-    base_query += " ORDER BY bs.normalized_date"
+    base_query += " ORDER BY bs.entity, bs.normalized_date"
     
     return execute_query(base_query, tuple(params))
 
 
 def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_accounts=None):
-    """Find vendors with 5+ transactions in period"""
+    """Find vendors with 5+ transactions. If entity is None, search all entities."""
     
     base_query = """
         SELECT 
+            bs.entity,
             bs.description,
             COUNT(*) as cnt,
             SUM(bs.amount) as total,
@@ -658,12 +683,15 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_acco
         LEFT JOIN acc.vendor_gl_patterns vp 
             ON bs.description ILIKE '%' || vp.pattern || '%'
             AND vp.entity = bs.entity
-        WHERE bs.entity = %s
-          AND bs.normalized_date BETWEEN %s AND %s
+        WHERE bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
     """
     
-    params = [entity, start_date, end_date]
+    params = [start_date, end_date]
+    
+    if entity:
+        base_query += " AND bs.entity = %s"
+        params.append(entity)
     
     # Filter by active accounts if provided
     # Note: active_accounts list comes from trusted database query results
@@ -673,7 +701,7 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_acco
         params.extend(active_accounts)
     
     base_query += """
-        GROUP BY bs.description, vp.gl_account_code
+        GROUP BY bs.entity, bs.description, vp.gl_account_code
         HAVING COUNT(*) >= %s
         ORDER BY COUNT(*) DESC
     """
@@ -683,17 +711,24 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_acco
 
 
 def get_allocation_progress(entity, start_date, end_date):
-    """Get allocation progress statistics"""
-    query = """
+    """Get allocation progress. If entity is None, get progress for all entities."""
+    
+    base_query = """
         SELECT 
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE gl_account_code != 'TODO') as allocated,
             COUNT(*) FILTER (WHERE gl_account_code = 'TODO') as remaining
         FROM acc.bank_staging
-        WHERE entity = %s
-          AND normalized_date BETWEEN %s AND %s
+        WHERE normalized_date BETWEEN %s AND %s
     """
-    results = execute_query(query, (entity, start_date, end_date))
+    
+    params = [start_date, end_date]
+    
+    if entity:
+        base_query += " AND entity = %s"
+        params.append(entity)
+    
+    results = execute_query(base_query, tuple(params))
     return results[0] if results else {'total': 0, 'allocated': 0, 'remaining': 0}
 
 
@@ -727,13 +762,14 @@ def display_progress_bar(allocated, total, width=20):
 class WizardState:
     """Track wizard progress and statistics"""
     def __init__(self, entity, period, start_date, end_date):
-        self.entity = entity
+        self.entity = entity  # Can be None for all entities
         self.period = period
         self.start_date = start_date
         self.end_date = end_date
         self.current_step = 1
         self.total_steps = 5
         self.active_accounts = []  # List of non-skipped accounts
+        self.active_entities = []  # List of entities with active accounts
         self.stats = {
             'intercompany_assigned': 0,
             'loans_assigned': 0,
@@ -748,7 +784,7 @@ class WizardState:
 # ============================================================================
 
 @allocate.command('wizard')
-@click.option('--entity', '-e', required=True, help='Entity code (e.g., bgs)')
+@click.option('--entity', '-e', required=False, help='Entity code (e.g., bgs). If omitted, shows all entities.')
 @click.option('--period', '-p', required=True, help='Period: YYYY, YYYY-QN, or YYYY-MM')
 def allocation_wizard(entity, period):
     """Guided allocation wizard for transaction categorization"""
@@ -762,9 +798,15 @@ def allocation_wizard(entity, period):
     # Initialize wizard state
     state = WizardState(entity, period, start_date, end_date)
     
+    # Set header based on whether entity is specified
+    if entity:
+        header_entity = entity.upper()
+    else:
+        header_entity = "ALL ENTITIES"
+    
     clear_screen()
     console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
-    console.print(f"[bold cyan]   Allocation Wizard - {entity.upper()} - {period}[/bold cyan]")
+    console.print(f"[bold cyan]   Allocation Wizard - {header_entity} - {period}[/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
     
     # STEP 1: Import Status
@@ -774,20 +816,24 @@ def allocation_wizard(entity, period):
     import_status = get_import_status(entity, start_date, end_date, period)
     
     if not import_status:
-        console.print(f"[red]No accounts found for entity: {entity}[/red]\n")
+        if entity:
+            console.print(f"[red]No accounts found for entity: {entity}[/red]\n")
+        else:
+            console.print("[red]No accounts found[/red]\n")
         return
     
     # Display and handle Step 1 - loop to allow skip/unskip operations
     while True:
         clear_screen()
         console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
-        console.print(f"[bold cyan]   Allocation Wizard - {entity.upper()} - {period}[/bold cyan]")
+        console.print(f"[bold cyan]   Allocation Wizard - {header_entity} - {period}[/bold cyan]")
         console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
         console.print(f"[bold cyan]STEP 1 of {state.total_steps}: Import Status[/bold cyan]")
         console.print("─" * 63)
         
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("#", justify="right", style="cyan")
+        table.add_column("Entity", style="yellow")
         table.add_column("Account", style="white")
         table.add_column("Records", justify="right")
         table.add_column("Date Range", style="white")
@@ -812,6 +858,7 @@ def allocation_wizard(entity, period):
             
             table.add_row(
                 str(idx),
+                row['entity'],
                 row['account'],
                 str(row['record_count']),
                 date_range,
@@ -845,6 +892,8 @@ def allocation_wizard(entity, period):
             # Store active (non-skipped) accounts in wizard state for later steps
             state.active_accounts = [row['account'] for row in import_status 
                                      if row['wizard_status'] != 'skipped']
+            state.active_entities = list(set(row['entity'] for row in import_status 
+                                             if row['wizard_status'] != 'skipped'))
             break
         elif action.lower().startswith('s '):
             # Parse account numbers to skip
@@ -857,7 +906,7 @@ def allocation_wizard(entity, period):
                             console.print(f"[yellow]Account {acc['account']} is already skipped[/yellow]")
                         else:
                             reason = Prompt.ask(f"Reason for skipping {acc['account']}", default="")
-                            skip_account(acc['account'], entity, period, reason or None)
+                            skip_account(acc['account'], acc['entity'], period, reason or None)
                             console.print(f"[yellow]Skipped: {acc['account']}[/yellow]")
                     else:
                         console.print(f"[red]Invalid account number: {num}[/red]")
@@ -873,7 +922,7 @@ def allocation_wizard(entity, period):
                 if 1 <= num <= len(import_status):
                     acc = import_status[num - 1]
                     if acc['wizard_status'] == 'skipped':
-                        unskip_account(acc['account'], entity, period)
+                        unskip_account(acc['account'], acc['entity'], period)
                         console.print(f"[green]Unskipped: {acc['account']}[/green]")
                     else:
                         console.print(f"[yellow]Account {acc['account']} is not skipped[/yellow]")
@@ -1000,6 +1049,7 @@ def allocation_wizard(entity, period):
         
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("#", justify="right", style="cyan")
+        table.add_column("Entity", style="yellow")
         table.add_column("Vendor", style="white")
         table.add_column("Count", justify="right")
         table.add_column("Total", justify="right")
@@ -1010,6 +1060,7 @@ def allocation_wizard(entity, period):
             suggested = row['suggested_code'] if row['suggested_code'] else "[dim](no pattern)[/dim]"
             table.add_row(
                 str(idx),
+                row['entity'],
                 row['description'][:30],
                 str(row['cnt']),
                 f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]",
@@ -1044,7 +1095,7 @@ def allocation_wizard(entity, period):
                           AND gl_account_code = 'TODO'
                           AND normalized_date BETWEEN %s AND %s
                     """
-                    execute_command(update_query, (row['suggested_code'], row['description'], entity, start_date, end_date))
+                    execute_command(update_query, (row['suggested_code'], row['description'], row['entity'], start_date, end_date))
                     assigned_count += row['cnt']
                     state.stats['recurring_assigned'] += row['cnt']
             
@@ -1066,7 +1117,16 @@ def allocation_wizard(entity, period):
     from copilot.commands.staging_cmd import get_todo_grouped
     
     progress = get_allocation_progress(entity, start_date, end_date)
-    todos = get_todo_grouped(entity)
+    
+    # Get todos for all active entities when entity is None
+    todos = []
+    if entity:
+        todos = get_todo_grouped(entity)
+    else:
+        # When no specific entity, get todos from all active entities
+        for ent in state.active_entities:
+            ent_todos = get_todo_grouped(ent)
+            todos.extend(ent_todos)
     
     # Filter todos to only those in the period
     todos_filtered = []
@@ -1076,11 +1136,16 @@ def allocation_wizard(entity, period):
             SELECT COUNT(*) as cnt
             FROM acc.bank_staging
             WHERE description = %s
-              AND entity = %s
               AND gl_account_code = 'TODO'
               AND normalized_date BETWEEN %s AND %s
         """
-        result = execute_query(check_query, (todo['description'], entity, start_date, end_date))
+        params = [todo['description'], start_date, end_date]
+        
+        if entity:
+            check_query += " AND entity = %s"
+            params.append(entity)
+        
+        result = execute_query(check_query, tuple(params))
         if result and result[0]['cnt'] > 0:
             todos_filtered.append(todo)
     
@@ -1112,7 +1177,7 @@ def allocation_wizard(entity, period):
             console.print(table)
             console.print()
         
-        console.print("[yellow]Use 'copilot staging assign-todo --entity {}' for interactive assignment[/yellow]\n".format(entity))
+        console.print("[yellow]Use 'copilot staging assign-todo{}' for interactive assignment[/yellow]\n".format(f" --entity {entity}" if entity else ""))
     else:
         console.print("[green]✓ All transactions allocated![/green]\n")
     
@@ -1124,7 +1189,7 @@ def allocation_wizard(entity, period):
     console.print("[bold cyan]   Allocation Complete![/bold cyan]")
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
     
-    console.print(f"[bold]Summary for {entity.upper()} - {period}:[/bold]\n")
+    console.print(f"[bold]Summary for {header_entity} - {period}:[/bold]\n")
     
     final_progress = get_allocation_progress(entity, start_date, end_date)
     
