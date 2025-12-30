@@ -508,36 +508,75 @@ def parse_period(period):
         raise ValueError(f"Invalid period format: {period}. Use YYYY, YYYY-QN, or YYYY-MM")
 
 
-def get_import_status(entity, start_date, end_date):
+def get_import_status(entity, start_date, end_date, period):
     """Get import status for all accounts belonging to entity"""
     query = """
         SELECT 
             ba.code as account,
+            ba.name as account_name,
             COUNT(bs.id) as record_count,
             MIN(bs.normalized_date) as min_date,
-            MAX(bs.normalized_date) as max_date
+            MAX(bs.normalized_date) as max_date,
+            was.status as wizard_status,
+            was.reason as skip_reason
         FROM acc.bank_account ba
         LEFT JOIN acc.bank_staging bs 
             ON bs.source_account_code = ba.code
             AND bs.normalized_date BETWEEN %s AND %s
+        LEFT JOIN acc.wizard_account_status was
+            ON was.account_code = ba.code
+            AND was.period = %s
         WHERE ba.entity = %s
-        GROUP BY ba.code
+        GROUP BY ba.code, ba.name, was.status, was.reason
         ORDER BY ba.code
     """
-    return execute_query(query, (start_date, end_date, entity))
+    return execute_query(query, (start_date, end_date, period, entity))
 
 
-def detect_intercompany_transfers(entity, start_date, end_date):
-    """Find potential intercompany transfers - matching amounts on same date, opposite signs"""
+def skip_account(account_code, entity, period, reason=None):
+    """Mark an account as skipped for a period"""
     query = """
+        INSERT INTO acc.wizard_account_status (account_code, entity, period, status, reason)
+        VALUES (%s, %s, %s, 'skipped', %s)
+        ON CONFLICT (account_code, period) 
+        DO UPDATE SET status = 'skipped', reason = %s, updated_at = CURRENT_TIMESTAMP
+    """
+    execute_command(query, (account_code, entity, period, reason, reason))
+
+
+def unskip_account(account_code, period):
+    """Remove skipped status for an account"""
+    query = """
+        DELETE FROM acc.wizard_account_status 
+        WHERE account_code = %s AND period = %s
+    """
+    execute_command(query, (account_code, period))
+
+
+def get_skipped_accounts(entity, period):
+    """Get list of skipped accounts for entity/period"""
+    query = """
+        SELECT account_code, reason, created_at
+        FROM acc.wizard_account_status
+        WHERE entity = %s AND period = %s AND status = 'skipped'
+    """
+    return execute_query(query, (entity, period))
+
+
+def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
+    """Find potential intercompany transfers - matching amounts on same date, opposite signs"""
+    
+    base_query = """
         SELECT 
             a.id as from_id,
             a.normalized_date,
             a.entity as from_entity,
+            a.source_account_code as from_account,
             a.description as from_desc,
             a.amount as from_amount,
             b.id as to_id,
             b.entity as to_entity,
+            b.source_account_code as to_account,
             b.description as to_desc,
             b.amount as to_amount
         FROM acc.bank_staging a
@@ -551,14 +590,25 @@ def detect_intercompany_transfers(entity, start_date, end_date):
           AND (a.entity = %s OR b.entity = %s)
           AND a.gl_account_code = 'TODO'
           AND b.gl_account_code = 'TODO'
-        ORDER BY a.normalized_date
     """
-    return execute_query(query, (start_date, end_date, entity, entity))
+    
+    params = [start_date, end_date, entity, entity]
+    
+    # Filter by active accounts if provided
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        base_query += f" AND a.source_account_code IN ({placeholders})"
+        params.extend(active_accounts)
+    
+    base_query += " ORDER BY a.normalized_date"
+    
+    return execute_query(base_query, tuple(params))
 
 
-def detect_loan_payments(entity, start_date, end_date):
+def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
     """Find potential loan payments based on known loan vendors"""
-    query = """
+    
+    base_query = """
         SELECT 
             bs.id,
             bs.normalized_date,
@@ -578,14 +628,25 @@ def detect_loan_payments(entity, start_date, end_date):
               OR bs.description ILIKE '%LOAN%'
               OR vp.gl_account_code IS NOT NULL
           )
-        ORDER BY bs.normalized_date
     """
-    return execute_query(query, (entity, start_date, end_date))
+    
+    params = [entity, start_date, end_date]
+    
+    # Filter by active accounts if provided
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        base_query += f" AND bs.source_account_code IN ({placeholders})"
+        params.extend(active_accounts)
+    
+    base_query += " ORDER BY bs.normalized_date"
+    
+    return execute_query(base_query, tuple(params))
 
 
-def get_recurring_vendors(entity, start_date, end_date, min_count=5):
+def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_accounts=None):
     """Find vendors with 5+ transactions in period"""
-    query = """
+    
+    base_query = """
         SELECT 
             bs.description,
             COUNT(*) as cnt,
@@ -598,11 +659,24 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5):
         WHERE bs.entity = %s
           AND bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
+    """
+    
+    params = [entity, start_date, end_date]
+    
+    # Filter by active accounts if provided
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        base_query += f" AND bs.source_account_code IN ({placeholders})"
+        params.extend(active_accounts)
+    
+    base_query += """
         GROUP BY bs.description, vp.gl_account_code
         HAVING COUNT(*) >= %s
         ORDER BY COUNT(*) DESC
     """
-    return execute_query(query, (entity, start_date, end_date, min_count))
+    params.append(min_count)
+    
+    return execute_query(base_query, tuple(params))
 
 
 def get_allocation_progress(entity, start_date, end_date):
@@ -656,6 +730,7 @@ class WizardState:
         self.end_date = end_date
         self.current_step = 1
         self.total_steps = 5
+        self.active_accounts = []  # List of non-skipped accounts
         self.stats = {
             'intercompany_assigned': 0,
             'loans_assigned': 0,
@@ -693,62 +768,120 @@ def allocation_wizard(entity, period):
     console.print(f"[bold cyan]STEP 1 of {state.total_steps}: Import Status[/bold cyan]")
     console.print("─" * 63)
     
-    import_status = get_import_status(entity, start_date, end_date)
+    import_status = get_import_status(entity, start_date, end_date, period)
     
     if not import_status:
         console.print(f"[red]No accounts found for entity: {entity}[/red]\n")
         return
     
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Account", style="cyan")
-    table.add_column("Records", justify="right")
-    table.add_column("Date Range", style="white")
-    table.add_column("Status", style="white")
-    
-    for row in import_status:
-        if row['record_count'] > 0:
-            date_range = f"{row['min_date']} → {row['max_date']}"
-            status = "[green]✓ Complete[/green]"
-        else:
-            date_range = ""
-            status = "[red]✗ Not imported[/red]"
+    # Display and handle Step 1 - loop to allow skip/unskip operations
+    while True:
+        clear_screen()
+        console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+        console.print(f"[bold cyan]   Allocation Wizard - {entity.upper()} - {period}[/bold cyan]")
+        console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
+        console.print(f"[bold cyan]STEP 1 of {state.total_steps}: Import Status[/bold cyan]")
+        console.print("─" * 63)
         
-        table.add_row(
-            row['account'],
-            str(row['record_count']),
-            date_range,
-            status
-        )
-    
-    console.print(table)
-    console.print()
-    
-    # Check if we have any imports
-    total_records = sum(row['record_count'] for row in import_status)
-    if total_records == 0:
-        console.print("[red]No transactions imported for this period.[/red]")
-        console.print("[dim]Use 'copilot import' to import bank statements first.[/dim]\n")
-        return
-    
-    action = Prompt.ask(
-        "[i] Import missing    [c] Continue    [q] Quit",
-        choices=['i', 'c', 'q'],
-        default='c'
-    )
-    
-    if action == 'q':
-        console.print("\n[yellow]Wizard cancelled[/yellow]\n")
-        return
-    elif action == 'i':
-        console.print("\n[yellow]Please use 'copilot import' to import missing accounts[/yellow]\n")
-        return
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("Account", style="white")
+        table.add_column("Records", justify="right")
+        table.add_column("Date Range", style="white")
+        table.add_column("Status", style="white")
+        
+        for idx, row in enumerate(import_status, 1):
+            if row['wizard_status'] == 'skipped':
+                status = f"[dim]⊘ Skipped[/dim]"
+                if row['skip_reason']:
+                    status += f" [dim]({row['skip_reason'][:20]})[/dim]"
+                date_range = ""
+            elif row['record_count'] > 0:
+                # Check if date range covers full period
+                if row['min_date'] <= start_date and row['max_date'] >= end_date:
+                    status = "[green]✓ Complete[/green]"
+                else:
+                    status = "[yellow]⚠ Partial[/yellow]"
+                date_range = f"{row['min_date']} → {row['max_date']}"
+            else:
+                status = "[red]✗ Not imported[/red]"
+                date_range = ""
+            
+            table.add_row(
+                str(idx),
+                row['account'],
+                str(row['record_count']),
+                date_range,
+                status
+            )
+        
+        console.print(table)
+        console.print()
+        
+        # Check if we have any imports
+        total_records = sum(row['record_count'] for row in import_status if row['wizard_status'] != 'skipped')
+        if total_records == 0:
+            console.print("[red]No transactions imported for this period (or all accounts skipped).[/red]")
+            console.print("[dim]Use 'copilot import' to import bank statements first.[/dim]\n")
+            return
+        
+        # Show commands
+        console.print("[bold]Commands:[/bold]")
+        console.print("  [c] Continue with imported accounts")
+        console.print("  [s #,#] Skip account(s) - e.g., 's 3,4'")
+        console.print("  [u #] Unskip account - e.g., 'u 3'")
+        console.print("  [q] Quit")
+        console.print()
+        
+        action = Prompt.ask("Enter command", default="c")
+        
+        if action.lower() == 'q':
+            console.print("\n[yellow]Wizard cancelled[/yellow]\n")
+            return
+        elif action.lower() == 'c':
+            # Store active (non-skipped) accounts in wizard state for later steps
+            state.active_accounts = [row['account'] for row in import_status 
+                                     if row['wizard_status'] != 'skipped']
+            break
+        elif action.lower().startswith('s '):
+            # Parse account numbers to skip
+            try:
+                nums = [int(n.strip()) for n in action[2:].split(',')]
+                for num in nums:
+                    if 1 <= num <= len(import_status):
+                        acc = import_status[num - 1]
+                        reason = Prompt.ask(f"Reason for skipping {acc['account']}", default="")
+                        skip_account(acc['account'], entity, period, reason or None)
+                        console.print(f"[yellow]Skipped: {acc['account']}[/yellow]")
+                    else:
+                        console.print(f"[red]Invalid account number: {num}[/red]")
+                # Refresh display
+                import_status = get_import_status(entity, start_date, end_date, period)
+            except ValueError:
+                console.print("[red]Invalid format. Use 's 3' or 's 3,4'[/red]")
+                input("\nPress Enter to continue...")
+        elif action.lower().startswith('u '):
+            # Parse account number to unskip
+            try:
+                num = int(action[2:].strip())
+                if 1 <= num <= len(import_status):
+                    acc = import_status[num - 1]
+                    unskip_account(acc['account'], period)
+                    console.print(f"[green]Unskipped: {acc['account']}[/green]")
+                else:
+                    console.print(f"[red]Invalid account number: {num}[/red]")
+                # Refresh display
+                import_status = get_import_status(entity, start_date, end_date, period)
+            except ValueError:
+                console.print("[red]Invalid format. Use 'u 3'[/red]")
+                input("\nPress Enter to continue...")
     
     # STEP 2: Intercompany Detection
     clear_screen()
     console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Intercompany Detection[/bold cyan]")
     console.print("─" * 63)
     
-    intercompany = detect_intercompany_transfers(entity, start_date, end_date)
+    intercompany = detect_intercompany_transfers(entity, start_date, end_date, state.active_accounts)
     
     if intercompany:
         console.print(f"[green]Found {len(intercompany)} potential intercompany transfers:[/green]\n")
@@ -800,7 +933,7 @@ def allocation_wizard(entity, period):
     console.print(f"\n[bold cyan]STEP 3 of {state.total_steps}: Loan/Mortgage Payments[/bold cyan]")
     console.print("─" * 63)
     
-    loans = detect_loan_payments(entity, start_date, end_date)
+    loans = detect_loan_payments(entity, start_date, end_date, state.active_accounts)
     
     if loans:
         console.print(f"[green]Found {len(loans)} potential loan payments:[/green]\n")
@@ -851,7 +984,7 @@ def allocation_wizard(entity, period):
     console.print(f"\n[bold cyan]STEP 4 of {state.total_steps}: Recurring Transactions[/bold cyan]")
     console.print("─" * 63)
     
-    recurring = get_recurring_vendors(entity, start_date, end_date)
+    recurring = get_recurring_vendors(entity, start_date, end_date, active_accounts=state.active_accounts)
     
     if recurring:
         console.print(f"[green]High-frequency vendors (5+ transactions):[/green]\n")
