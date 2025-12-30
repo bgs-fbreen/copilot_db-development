@@ -7,6 +7,8 @@
 
 -- Add unique constraint if it doesn't exist (idempotent)
 DO $$
+DECLARE
+    duplicate_count INTEGER;
 BEGIN
     -- Check if the constraint already exists
     IF NOT EXISTS (
@@ -15,12 +17,26 @@ BEGIN
           AND conrelid = 'acc.wizard_account_status'::regclass
     ) THEN
         -- First, check for and remove any duplicate rows that would violate the constraint
-        DELETE FROM acc.wizard_account_status a
-        USING acc.wizard_account_status b
-        WHERE a.id > b.id
-          AND a.account_code = b.account_code
-          AND a.entity = b.entity
-          AND a.period = b.period;
+        -- This uses a CTE with row_number to keep only the first occurrence (lowest id)
+        WITH duplicates AS (
+            SELECT id
+            FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY account_code, entity, period 
+                           ORDER BY id
+                       ) as rn
+                FROM acc.wizard_account_status
+            ) ranked
+            WHERE rn > 1
+        )
+        DELETE FROM acc.wizard_account_status
+        WHERE id IN (SELECT id FROM duplicates);
+        
+        GET DIAGNOSTICS duplicate_count = ROW_COUNT;
+        IF duplicate_count > 0 THEN
+            RAISE NOTICE 'Removed % duplicate rows', duplicate_count;
+        END IF;
         
         -- Add the unique constraint
         ALTER TABLE acc.wizard_account_status 
