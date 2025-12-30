@@ -100,14 +100,33 @@ def assign_gl_code(description, gl_code, entity, notes=None):
     # Execute update
     execute_command(update_query, (gl_code, description, entity))
     
-    # Create pattern for future imports
+    # Create or update pattern for future imports
     pattern = description
-    pattern_query = """
-        INSERT INTO acc.vendor_gl_patterns (pattern, gl_account_code, entity, notes, priority)
-        VALUES (%s, %s, %s, %s, 100)
-        ON CONFLICT DO NOTHING
+    
+    # Check if pattern exists
+    check_query = """
+        SELECT id FROM acc.vendor_gl_patterns
+        WHERE pattern = %s AND entity = %s
     """
-    execute_command(pattern_query, (pattern, gl_code, entity, notes))
+    existing = execute_query(check_query, (pattern, entity))
+    
+    if existing:
+        # Update existing pattern
+        update_pattern_query = """
+            UPDATE acc.vendor_gl_patterns
+            SET gl_account_code = %s,
+                notes = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE pattern = %s AND entity = %s
+        """
+        execute_command(update_pattern_query, (gl_code, notes, pattern, entity))
+    else:
+        # Insert new pattern
+        insert_pattern_query = """
+            INSERT INTO acc.vendor_gl_patterns (pattern, gl_account_code, entity, notes, priority)
+            VALUES (%s, %s, %s, %s, 100)
+        """
+        execute_command(insert_pattern_query, (pattern, gl_code, entity, notes))
     
     return count
 
