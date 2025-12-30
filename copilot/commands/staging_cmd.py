@@ -582,10 +582,11 @@ def assign_todo(entity):
             if suggestions:
                 console.print("[bold white] Keyword matches:[/bold white]")
                 for suggestion in set(suggestions):
-                    truncated_keywords = keywords[:MAX_KEYWORD_LENGTH]
-                    if len(keywords) > MAX_KEYWORD_LENGTH:
-                        truncated_keywords += "..."
-                    console.print(f"   • \"{truncated_keywords}\" → [cyan]{suggestion}[/cyan]")
+                    # Use original user_context for display (not lowercased)
+                    truncated_context = user_context[:MAX_KEYWORD_LENGTH]
+                    if len(user_context) > MAX_KEYWORD_LENGTH:
+                        truncated_context += "..."
+                    console.print(f"   • \"{truncated_context}\" → [cyan]{suggestion}[/cyan]")
                 console.print()
         
         console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
