@@ -9,6 +9,7 @@ import os
 from datetime import datetime
 from rich.console import Console
 from rich.table import Table
+from rich.box import HEAVY_HEAD
 from rich.prompt import Confirm
 from copilot.db import execute_query, get_connection
 from copilot.utils import parse_period
@@ -222,7 +223,6 @@ def show_import_help():
         
         if accounts:
             # Create the status table with box drawing
-            from rich.box import HEAVY_HEAD
             table = Table(show_header=True, header_style="bold magenta", box=HEAVY_HEAD)
             table.add_column("#", style="cyan", justify="right")
             table.add_column("Entity", style="white")
@@ -242,13 +242,11 @@ def show_import_help():
                     date_range = ""
                 
                 # Determine status
+                # Mark accounts with records as "Partial" since we don't track completion status
                 if record_count == 0:
-                    # Check if this is a skip case (no transactions in current year)
-                    # For now, we'll just mark as not imported
                     status = "✗ Not imported"
                     status_color = "red"
                 else:
-                    # Has some records, mark as partial
                     status = "⚠ Partial"
                     status_color = "yellow"
                 
