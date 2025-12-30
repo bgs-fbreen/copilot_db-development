@@ -219,7 +219,7 @@ def show_import_help():
             FROM acc.bank_account ba
             LEFT JOIN acc.bank_staging bs ON bs.source_account_code = ba.code
             LEFT JOIN acc.wizard_account_status was ON was.account_code = ba.code
-                AND was.entity = SPLIT_PART(ba.code, ':', 1)
+                AND was.entity = ba.entity
             WHERE ba.status = 'active'
             GROUP BY ba.code, ba.name, ba.institution, was.status, was.reason
             ORDER BY ba.code
