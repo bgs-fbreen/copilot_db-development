@@ -31,13 +31,13 @@ The following diagram illustrates the complete three-step workflow from importin
 flowchart TB
     subgraph Import["Step 1: Import Bank Data"]
         CSV[("CSV Files<br/>(Bank Statements)")]
-        CMD1["copilot import csv<br/>--account &lt;code&gt;"]
+        CMD1["copilot import csv<br/>--account 'code'"]
         STAGING1[("bank_staging<br/>GL: 'TODO'")]
         CSV --> CMD1 --> STAGING1
     end
     
     subgraph Allocate["Step 2: Allocate Transactions"]
-        CMD2["copilot allocate wizard<br/>--period &lt;year&gt;"]
+        CMD2["copilot allocate wizard<br/>--period 'year'"]
         S1["Import Status Check"]
         S2["Intercompany Detection"]
         S3["Loan/Mortgage Detection"]
