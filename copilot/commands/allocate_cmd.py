@@ -538,19 +538,19 @@ def skip_account(account_code, entity, period, reason=None):
     query = """
         INSERT INTO acc.wizard_account_status (account_code, entity, period, status, reason)
         VALUES (%s, %s, %s, 'skipped', %s)
-        ON CONFLICT (account_code, period) 
+        ON CONFLICT (account_code, entity, period) 
         DO UPDATE SET status = 'skipped', reason = %s, updated_at = CURRENT_TIMESTAMP
     """
     execute_command(query, (account_code, entity, period, reason, reason))
 
 
-def unskip_account(account_code, period):
+def unskip_account(account_code, entity, period):
     """Remove skipped status for an account"""
     query = """
         DELETE FROM acc.wizard_account_status 
-        WHERE account_code = %s AND period = %s
+        WHERE account_code = %s AND entity = %s AND period = %s
     """
-    execute_command(query, (account_code, period))
+    execute_command(query, (account_code, entity, period))
 
 
 def get_skipped_accounts(entity, period):
@@ -595,6 +595,7 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     params = [start_date, end_date, entity, entity]
     
     # Filter by active accounts if provided
+    # Note: active_accounts list comes from trusted database query results
     if active_accounts:
         placeholders = ','.join(['%s'] * len(active_accounts))
         base_query += f" AND a.source_account_code IN ({placeholders})"
@@ -633,6 +634,7 @@ def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
     params = [entity, start_date, end_date]
     
     # Filter by active accounts if provided
+    # Note: active_accounts list comes from trusted database query results
     if active_accounts:
         placeholders = ','.join(['%s'] * len(active_accounts))
         base_query += f" AND bs.source_account_code IN ({placeholders})"
@@ -664,6 +666,7 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_acco
     params = [entity, start_date, end_date]
     
     # Filter by active accounts if provided
+    # Note: active_accounts list comes from trusted database query results
     if active_accounts:
         placeholders = ','.join(['%s'] * len(active_accounts))
         base_query += f" AND bs.source_account_code IN ({placeholders})"
@@ -850,9 +853,12 @@ def allocation_wizard(entity, period):
                 for num in nums:
                     if 1 <= num <= len(import_status):
                         acc = import_status[num - 1]
-                        reason = Prompt.ask(f"Reason for skipping {acc['account']}", default="")
-                        skip_account(acc['account'], entity, period, reason or None)
-                        console.print(f"[yellow]Skipped: {acc['account']}[/yellow]")
+                        if acc['wizard_status'] == 'skipped':
+                            console.print(f"[yellow]Account {acc['account']} is already skipped[/yellow]")
+                        else:
+                            reason = Prompt.ask(f"Reason for skipping {acc['account']}", default="")
+                            skip_account(acc['account'], entity, period, reason or None)
+                            console.print(f"[yellow]Skipped: {acc['account']}[/yellow]")
                     else:
                         console.print(f"[red]Invalid account number: {num}[/red]")
                 # Refresh display
@@ -866,8 +872,11 @@ def allocation_wizard(entity, period):
                 num = int(action[2:].strip())
                 if 1 <= num <= len(import_status):
                     acc = import_status[num - 1]
-                    unskip_account(acc['account'], period)
-                    console.print(f"[green]Unskipped: {acc['account']}[/green]")
+                    if acc['wizard_status'] == 'skipped':
+                        unskip_account(acc['account'], entity, period)
+                        console.print(f"[green]Unskipped: {acc['account']}[/green]")
+                    else:
+                        console.print(f"[yellow]Account {acc['account']} is not skipped[/yellow]")
                 else:
                     console.print(f"[red]Invalid account number: {num}[/red]")
                 # Refresh display

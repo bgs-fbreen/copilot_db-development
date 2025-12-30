@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS acc.wizard_account_status (
     reason TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(account_code, period)
+    UNIQUE(account_code, entity, period)
 );
 
 CREATE INDEX IF NOT EXISTS idx_wizard_account_status_entity_period 
