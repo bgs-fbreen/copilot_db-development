@@ -29,32 +29,52 @@ The following diagram illustrates the complete three-step workflow from importin
 
 ```mermaid
 flowchart TB
-    subgraph Import["Step 1: Import Bank Data"]
-        CSV[("CSV Files<br/>(Bank Statements)")]
-        CMD1["copilot import csv<br/>--account 'code'"]
-        STAGING1[("bank_staging<br/>GL: 'TODO'")]
-        CSV --> CMD1 --> STAGING1
+    subgraph Sources["📁 Data Sources"]
+        CSV1[("Bank 1<br/>CSV")]
+        CSV2[("Bank 2<br/>CSV")]
+        CSV3[("Bank 3<br/>CSV")]
     end
-    
-    subgraph Allocate["Step 2: Allocate Transactions"]
-        CMD2["copilot allocate wizard<br/>--period 'year'"]
-        S1["Import Status Check"]
-        S2["Intercompany Detection"]
-        S3["Loan/Mortgage Detection"]
-        S4["Recurring Vendor Detection"]
-        S5["Manual Assignment"]
-        STAGING2[("bank_staging<br/>GL: assigned")]
+
+    subgraph Import["⬇️ Import Layer"]
+        CMD1["copilot import csv<br/>--account --period"]
+        STAGING[("bank_staging<br/>GL: 'TODO'")]
+    end
+
+    subgraph Wizard["🧙 Allocation Wizard"]
+        direction LR
+        CHECK{{"Import<br/>Complete?"}}
         
-        CMD2 --> S1 --> S2 --> S3 --> S4 --> S5 --> STAGING2
+        subgraph Auto["Automatic Detection"]
+            IC["Intercompany<br/>Transfers"]
+            LOAN["Loan<br/>Payments"]
+            REC["Recurring<br/>Vendors"]
+        end
+        
+        MANUAL["Manual<br/>Assignment"]
+        ALLOCATED[("bank_staging<br/>GL: assigned")]
     end
-    
-    subgraph Post["Step 3: Generate Entries"]
-        CMD3["copilot trial generate"]
-        JOURNAL[("Journal Entries")]
-        STAGING2 --> CMD3 --> JOURNAL
+
+    subgraph Output["📊 Output"]
+        TRIAL["copilot trial<br/>generate"]
+        JOURNAL[("Journal<br/>Entries")]
+        REPORTS["Reports &<br/>Trial Balance"]
     end
-    
-    STAGING1 --> CMD2
+
+    CSV1 --> CMD1
+    CSV2 --> CMD1
+    CSV3 --> CMD1
+    CMD1 --> STAGING
+    STAGING --> CHECK
+    CHECK -->|Yes| Auto
+    CHECK -->|No| SKIP[Skip Account]
+    IC --> ALLOCATED
+    LOAN --> ALLOCATED
+    REC --> ALLOCATED
+    Auto --> MANUAL
+    MANUAL --> ALLOCATED
+    ALLOCATED --> TRIAL
+    TRIAL --> JOURNAL
+    JOURNAL --> REPORTS
 ```
 
 ---
@@ -147,16 +167,38 @@ copilot import csv <file> --account <code> [--period <period>] [--dry-run]
 **Period Format Reference:**
 
 ```mermaid
-flowchart LR
-    subgraph Periods["Period Formats"]
-        YEAR["2024<br/>Full Year"]
-        Q["2024-Q4<br/>Quarter"]
-        MONTH["2024-12<br/>Month"]
+flowchart TB
+    subgraph Formats["📅 Period Format Options"]
+        direction LR
+        
+        subgraph Year["YYYY"]
+            Y_INPUT["2024"]
+            Y_RANGE["Jan 1 ─────────── Dec 31"]
+            Y_DAYS["365 days"]
+        end
+        
+        subgraph Quarter["YYYY-QN"]
+            Q_INPUT["2024-Q4"]
+            Q_RANGE["Oct 1 ─── Dec 31"]
+            Q_DAYS["92 days"]
+        end
+        
+        subgraph Month["YYYY-MM"]
+            M_INPUT["2024-12"]
+            M_RANGE["Dec 1 ─ Dec 31"]
+            M_DAYS["31 days"]
+        end
     end
-    
-    YEAR --> YR["Jan 1 - Dec 31"]
-    Q --> QR["Oct 1 - Dec 31"]
-    MONTH --> MR["Dec 1 - Dec 31"]
+
+    Y_INPUT --> Y_RANGE --> Y_DAYS
+    Q_INPUT --> Q_RANGE --> Q_DAYS
+    M_INPUT --> M_RANGE --> M_DAYS
+
+    subgraph Examples["💡 Examples"]
+        EX1["copilot import csv file.csv --period 2024"]
+        EX2["copilot allocate wizard --period 2024-Q4"]
+        EX3["copilot trial generate --period 2024-12"]
+    end
 ```
 
 - **`--dry-run`** - Preview import without saving
@@ -195,27 +237,48 @@ The import process follows a comprehensive validation and parsing workflow:
 
 ```mermaid
 flowchart TD
-    START([Start Import]) --> VALIDATE{Account<br/>Exists?}
-    VALIDATE -->|No| ERROR1[Show Error<br/>List Accounts]
-    VALIDATE -->|Yes| HASH[Compute File Hash]
-    HASH --> DUP{Previously<br/>Imported?}
-    DUP -->|Yes| WARN[Warning:<br/>Already Imported]
-    WARN --> CONFIRM1{Continue?}
-    CONFIRM1 -->|No| CANCEL([Cancelled])
-    CONFIRM1 -->|Yes| DETECT
-    DUP -->|No| DETECT[Detect CSV Format]
-    DETECT --> PARSE[Parse Transactions]
-    PARSE --> FILTER{Period<br/>Filter?}
-    FILTER -->|Yes| APPLY[Filter by Date Range]
-    FILTER -->|No| PREVIEW
-    APPLY --> PREVIEW[Preview Transactions]
-    PREVIEW --> DRYRUN{Dry Run?}
-    DRYRUN -->|Yes| STATS[Show Statistics] --> DONE([Done])
-    DRYRUN -->|No| CONFIRM2{Confirm<br/>Import?}
-    CONFIRM2 -->|No| CANCEL
-    CONFIRM2 -->|Yes| INSERT[Insert to bank_staging]
-    INSERT --> LOG[Log Import]
-    LOG --> SUCCESS([Success!])
+    START([🚀 Start Import]) --> INPUT["Read CSV File"]
+    
+    INPUT --> VALIDATE{{"Account<br/>Valid?"}}
+    VALIDATE -->|❌ No| ERROR1["❌ Show Error"]
+    ERROR1 --> LIST["List Available<br/>Accounts"]
+    LIST --> END1([End])
+    
+    VALIDATE -->|✅ Yes| HASH["Compute<br/>File Hash"]
+    
+    HASH --> DUP{{"Previously<br/>Imported?"}}
+    DUP -->|⚠️ Yes| WARN["⚠️ Warning"]
+    WARN --> OVERRIDE{{"Continue<br/>Anyway?"}}
+    OVERRIDE -->|No| END2([Cancelled])
+    OVERRIDE -->|Yes| DETECT
+    
+    DUP -->|No| DETECT["🔍 Detect CSV Format"]
+    
+    DETECT --> FORMAT{{"Format<br/>Detected?"}}
+    FORMAT -->|❌ No| MANUAL_MAP["Manual Column<br/>Mapping"]
+    FORMAT -->|✅ Yes| PARSE
+    MANUAL_MAP --> PARSE
+    
+    PARSE["📋 Parse Transactions"]
+    
+    PARSE --> PERIOD{{"Period<br/>Filter?"}}
+    PERIOD -->|Yes| FILTER["Filter by<br/>Date Range"]
+    PERIOD -->|No| COUNT
+    FILTER --> COUNT
+    
+    COUNT["Count: New vs Duplicates"]
+    
+    COUNT --> PREVIEW["📊 Preview"]
+    
+    PREVIEW --> MODE{{"Mode?"}}
+    MODE -->|Dry Run| STATS["📈 Show Statistics"] --> DONE([✅ Done])
+    MODE -->|Import| CONFIRM{{"Confirm?"}}
+    
+    CONFIRM -->|No| END3([Cancelled])
+    CONFIRM -->|Yes| INSERT["💾 Insert Records"]
+    
+    INSERT --> LOG["📝 Log Import"]
+    LOG --> SUCCESS([✅ Success!])
 ```
 
 #### Step 1: Validation
@@ -421,17 +484,51 @@ copilot allocate wizard --period <period> [--entity <code>]
 The wizard guides you through **5 comprehensive steps**:
 
 ```mermaid
-flowchart LR
-    subgraph Wizard["Allocation Wizard Steps"]
-        direction LR
-        STEP1["Step 1<br/>Import Status"]
-        STEP2["Step 2<br/>Intercompany"]
-        STEP3["Step 3<br/>Loans"]
-        STEP4["Step 4<br/>Recurring"]
-        STEP5["Step 5<br/>Summary"]
-        
-        STEP1 --> STEP2 --> STEP3 --> STEP4 --> STEP5
+flowchart TB
+    subgraph Step1["Step 1: Import Status"]
+        direction TB
+        S1_CHECK["Check All Accounts"]
+        S1_CHECK --> S1_COMPLETE["✓ Complete"]
+        S1_CHECK --> S1_PARTIAL["⚠ Partial"]
+        S1_CHECK --> S1_MISSING["✗ Missing"]
+        S1_CHECK --> S1_SKIP["⊘ Skipped"]
     end
+
+    subgraph Step2["Step 2: Intercompany"]
+        direction TB
+        S2_SCAN["Scan Matching<br/>Amounts"]
+        S2_SCAN --> S2_MATCH{{"Matches<br/>Found?"}}
+        S2_MATCH -->|Yes| S2_AUTO["Auto-Assign"]
+        S2_MATCH -->|No| S2_NEXT["Continue"]
+    end
+
+    subgraph Step3["Step 3: Loans"]
+        direction TB
+        S3_DETECT["Detect Mortgage/<br/>Loan Keywords"]
+        S3_DETECT --> S3_PATTERN{{"Pattern<br/>Exists?"}}
+        S3_PATTERN -->|Yes| S3_ASSIGN["Suggest GL"]
+        S3_PATTERN -->|No| S3_SKIP["Skip"]
+    end
+
+    subgraph Step4["Step 4: Recurring"]
+        direction TB
+        S4_GROUP["Group by<br/>Vendor"]
+        S4_GROUP --> S4_FREQ{{"5+<br/>Occurrences?"}}
+        S4_FREQ -->|Yes| S4_BULK["Bulk Assign"]
+        S4_FREQ -->|No| S4_INDIVIDUAL["Individual"]
+    end
+
+    subgraph Step5["Step 5: Summary"]
+        direction TB
+        S5_STATS["📊 Statistics"]
+        S5_REMAIN["Remaining TODOs"]
+        S5_NEXT["Next Steps"]
+    end
+
+    Step1 --> Step2
+    Step2 --> Step3
+    Step3 --> Step4
+    Step4 --> Step5
 ```
 
 #### Step 1: Import Status
@@ -489,18 +586,41 @@ Enter command [c]: c
 
 ```mermaid
 flowchart LR
-    subgraph Entity1["Entity: BGS"]
-        T1["Transaction<br/>-$5,000<br/>Jan 15"]
+    subgraph Scan["🔍 Transaction Scan"]
+        direction TB
+        ALL[("All TODO<br/>Transactions")]
+        ALL --> FILTER1["Filter: Negative"]
+        ALL --> FILTER2["Filter: Positive"]
     end
-    
-    subgraph Entity2["Entity: MHB"]
-        T2["Transaction<br/>+$5,000<br/>Jan 15"]
+
+    subgraph Match["🔗 Matching Engine"]
+        direction TB
+        COMPARE{{"Same Date?<br/>Same Amount?<br/>Different Entity?"}}
+        COMPARE -->|✅ All Yes| MATCHED["✅ Matched Pair"]
+        COMPARE -->|❌ Any No| UNMATCHED["Continue Scan"]
     end
-    
-    T1 <-->|"Matched as<br/>Intercompany"| T2
-    
-    T1 --> IC1["GL: ic:bgs-mhb"]
-    T2 --> IC2["GL: ic:bgs-mhb"]
+
+    subgraph BGS["Entity: BGS"]
+        T1["📤 Transfer Out<br/>-$5,000<br/>Jan 15"]
+    end
+
+    subgraph MHB["Entity: MHB"]
+        T2["📥 Transfer In<br/>+$5,000<br/>Jan 15"]
+    end
+
+    subgraph Result["✅ Result"]
+        IC["GL: ic:bgs-mhb"]
+        T1_DONE["BGS: Allocated"]
+        T2_DONE["MHB: Allocated"]
+    end
+
+    FILTER1 --> COMPARE
+    FILTER2 --> COMPARE
+    T1 --> COMPARE
+    T2 --> COMPARE
+    MATCHED --> IC
+    IC --> T1_DONE
+    IC --> T2_DONE
 ```
 
 **Assignment**:
@@ -678,19 +798,41 @@ The following state diagram shows how transactions move through different states
 
 ```mermaid
 stateDiagram-v2
-    [*] --> TODO: Import CSV
-    TODO --> Intercompany: Wizard Step 2
-    TODO --> Loan: Wizard Step 3
-    TODO --> Recurring: Wizard Step 4
-    TODO --> Manual: Manual Assignment
-    
-    Intercompany --> Allocated
-    Loan --> Allocated
-    Recurring --> Allocated
-    Manual --> Allocated
-    
-    Allocated --> Posted: Generate & Post
-    Posted --> [*]
+    [*] --> Imported: CSV Import
+
+    state Imported {
+        [*] --> TODO
+        TODO --> Validating: Wizard Start
+    }
+
+    state Validating {
+        [*] --> CheckAccount
+        CheckAccount --> Skipped: User Skip
+        CheckAccount --> Processing: Continue
+    }
+
+    state Processing {
+        [*] --> AutoDetect
+        
+        state AutoDetect {
+            [*] --> Intercompany
+            Intercompany --> Loans
+            Loans --> Recurring
+        }
+        
+        AutoDetect --> ManualReview: Unmatched
+        ManualReview --> Assigned: User Input
+        AutoDetect --> Assigned: Pattern Match
+    }
+
+    state Assigned {
+        [*] --> Staged
+        Staged --> Validated: Trial Generate
+        Validated --> Posted: Journal Post
+    }
+
+    Skipped --> [*]: Period End
+    Posted --> [*]: Complete
 ```
 
 ---
@@ -705,29 +847,53 @@ stateDiagram-v2
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Import as copilot import
-    participant DB as Database
-    participant Wizard as copilot allocate wizard
-    participant Trial as copilot trial
-    
-    User->>Import: csv file.csv --account bgs:checking --dry-run
-    Import->>User: Preview (no changes)
-    User->>Import: csv file.csv --account bgs:checking
-    Import->>DB: Insert to bank_staging (GL='TODO')
-    Import->>User: Success!
-    
-    User->>Wizard: wizard --period 2024-01
-    Wizard->>DB: Check import status
-    Wizard->>DB: Detect intercompany
-    Wizard->>DB: Detect loans
-    Wizard->>DB: Detect recurring
-    Wizard->>User: Summary
-    
-    User->>Trial: generate --entity bgs
-    Trial->>DB: Create trial entries
-    User->>Trial: validate
-    Trial->>User: Validation results
+    autonumber
+    participant U as 👤 User
+    participant I as 📥 Import
+    participant DB as 🗄️ Database
+    participant W as 🧙 Wizard
+    participant T as 📊 Trial
+
+    rect rgb(200, 230, 200)
+        Note over U,DB: Phase 1: Import
+        U->>I: copilot import csv --dry-run
+        I->>I: Parse & Validate
+        I-->>U: Preview (143 new, 12 dups)
+        U->>I: copilot import csv
+        I->>DB: INSERT bank_staging
+        DB-->>I: 143 rows
+        I-->>U: ✅ Import complete
+    end
+
+    rect rgb(200, 200, 230)
+        Note over U,DB: Phase 2: Allocation
+        U->>W: copilot allocate wizard
+        W->>DB: Check import status
+        DB-->>W: All accounts ready
+        
+        par Automatic Detection
+            W->>DB: Find intercompany
+            and
+            W->>DB: Find loans
+            and
+            W->>DB: Find recurring
+        end
+        
+        DB-->>W: Matches found
+        W->>DB: UPDATE gl_account_code
+        W-->>U: Summary: 98% allocated
+    end
+
+    rect rgb(230, 200, 200)
+        Note over U,T: Phase 3: Generate
+        U->>T: copilot trial generate
+        T->>DB: Create trial entries
+        U->>T: copilot trial validate
+        T-->>U: ✅ Valid
+        U->>T: copilot journal post
+        T->>DB: INSERT journal_entry
+        T-->>U: ✅ Posted!
+    end
 ```
 
 **Commands:**
