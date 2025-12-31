@@ -17,11 +17,43 @@ console = Console()
 BUSINESS_ACCOUNTS = {'bgs', 'mhb'}
 # Personal and support account entity codes for Steps 3 & 4 (Owner Draws and Contributions)
 PERSONAL_ACCOUNTS = {'csb', 'tax', 'medical'}
+# Display constants
+MAX_DESCRIPTION_LENGTH = 40
 
 
 def clear_screen():
     """Clear the terminal screen"""
     os.system('clear' if os.name != 'nt' else 'cls')
+
+
+def format_currency(amount):
+    """Format currency amount for display"""
+    if amount >= 0:
+        return f"${amount:,.2f}"
+    else:
+        return f"-${abs(amount):,.2f}"
+
+
+def build_like_condition(pattern_type, pattern):
+    """
+    Build ILIKE condition and parameter based on pattern type.
+    
+    Args:
+        pattern_type: Type of pattern ('contains', 'startswith', 'exact', or None)
+        pattern: Pattern string to match
+        
+    Returns:
+        tuple: (like_condition, like_param) for use in SQL query
+    """
+    if pattern_type == 'contains' or pattern_type is None:
+        return ("bs.description ILIKE %s", f"%{pattern}%")
+    elif pattern_type == 'startswith':
+        return ("bs.description ILIKE %s", f"{pattern}%")
+    elif pattern_type == 'exact':
+        return ("bs.description ILIKE %s", pattern)
+    else:
+        # Default to contains for unknown types
+        return ("bs.description ILIKE %s", f"%{pattern}%")
 
 
 def find_matching_payee_alias(payee):
@@ -1985,21 +2017,19 @@ def apply_patterns(dry_run, entity, from_date, to_date):
     
     for pattern in patterns:
         # Build the ILIKE condition based on pattern_type
-        if pattern['pattern_type'] == 'contains' or pattern['pattern_type'] is None:
-            like_condition = "bs.description ILIKE %s"
-            like_param = f"%{pattern['pattern']}%"
-        elif pattern['pattern_type'] == 'startswith':
-            like_condition = "bs.description ILIKE %s"
-            like_param = f"{pattern['pattern']}%"
-        elif pattern['pattern_type'] == 'exact':
-            like_condition = "bs.description ILIKE %s"
-            like_param = pattern['pattern']
-        else:
-            # Default to contains for unknown types
-            like_condition = "bs.description ILIKE %s"
-            like_param = f"%{pattern['pattern']}%"
+        like_condition, like_param = build_like_condition(pattern['pattern_type'], pattern['pattern'])
         
         # Query to find matching transactions
+        # Note: We need to add pattern's entity to where clause to avoid conflicts
+        pattern_where_clauses = where_clauses.copy()
+        pattern_params = params.copy()
+        
+        # Add pattern entity filter - this ensures we only match within the pattern's entity
+        pattern_where_clauses.append("bs.entity = %s")
+        pattern_params.append(pattern['entity'])
+        
+        pattern_where_clause = " AND ".join(pattern_where_clauses)
+        
         match_query = f"""
             SELECT 
                 bs.id,
@@ -2007,14 +2037,13 @@ def apply_patterns(dry_run, entity, from_date, to_date):
                 bs.amount,
                 bs.normalized_date
             FROM acc.bank_staging bs
-            WHERE {where_clause}
-              AND bs.entity = %s
+            WHERE {pattern_where_clause}
               AND {like_condition}
             ORDER BY bs.normalized_date DESC
         """
         
-        # Combine parameters: where_clause params + entity + like_param
-        query_params = params + [pattern['entity'], like_param]
+        # Combine parameters: pattern_where_clause params + like_param
+        query_params = pattern_params + [like_param]
         
         matches = execute_query(match_query, tuple(query_params))
         
@@ -2040,8 +2069,8 @@ def apply_patterns(dry_run, entity, from_date, to_date):
             console.print(f"[bold]Pattern:[/bold] {pattern['pattern']} ({pattern_type}) → [cyan]{pattern['gl_account_code']}[/cyan]")
             
             for match in matches:
-                amount_str = f"${match['amount']:,.2f}" if match['amount'] >= 0 else f"-${abs(match['amount']):,.2f}"
-                console.print(f"  • {match['description'][:40]:<40} {amount_str:>12}")
+                amount_str = format_currency(match['amount'])
+                console.print(f"  • {match['description'][:MAX_DESCRIPTION_LENGTH]:<{MAX_DESCRIPTION_LENGTH}} {amount_str:>12}")
             
             console.print()
         
@@ -2060,7 +2089,16 @@ def apply_patterns(dry_run, entity, from_date, to_date):
             
             if matches:
                 # Update all matching transactions for this pattern
-                transaction_ids = [m['id'] for m in matches]
+                # Validate that all IDs are integers to prevent SQL injection
+                transaction_ids = []
+                for m in matches:
+                    if not isinstance(m['id'], int):
+                        console.print(f"[red]Error: Invalid transaction ID type: {type(m['id'])}[/red]")
+                        continue
+                    transaction_ids.append(m['id'])
+                
+                if not transaction_ids:
+                    continue
                 
                 # Build UPDATE query with IN clause
                 placeholders = ','.join(['%s'] * len(transaction_ids))
