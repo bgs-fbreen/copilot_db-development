@@ -3,6 +3,7 @@ Transaction allocation command - Categorize transactions
 """
 import click
 import os
+import re
 import calendar
 from datetime import date
 from rich.console import Console
@@ -82,8 +83,6 @@ def detect_transfer_gl_code(description, source_entity):
     Returns:
         GL code string or None if transfer cannot be detected
     """
-    import re
-    
     # 1. Detect direction
     desc_upper = description.upper()
     if 'TRANSFER TO' in desc_upper or 'TRF TO' in desc_upper:
@@ -1289,7 +1288,7 @@ class WizardState:
         self.start_date = start_date
         self.end_date = end_date
         self.current_step = 1
-        self.total_steps = 10
+        self.total_steps = 11  # Updated to include Step 5.5
         self.active_accounts = []  # List of non-skipped accounts
         self.active_entities = []  # List of entities with active accounts
         self.stats = {
@@ -1297,6 +1296,7 @@ class WizardState:
             'owner_draws_assigned': 0,
             'owner_contributions_assigned': 0,
             'mortgage_payments_assigned': 0,
+            'smart_transfers_assigned': 0,  # New: single-sided transfers detected
             'bgs_expenses_assigned': 0,
             'mhb_expenses_assigned': 0,
             'csb_expenses_assigned': 0,
@@ -1714,7 +1714,7 @@ def allocation_wizard(entity, period):
     
     if single_transfer_count > 0:
         console.print(f"[green]✓ Auto-assigned {single_transfer_count} single-sided transfers using smart detection![/green]\n")
-        state.stats['related_party_loans_assigned'] += single_transfer_count  # Count towards appropriate category
+        state.stats['smart_transfers_assigned'] += single_transfer_count
     else:
         console.print("[dim]No additional single-sided transfers detected[/dim]\n")
     
@@ -1925,6 +1925,7 @@ def allocation_wizard(entity, period):
     console.print(f"    Owner Draws:            {state.stats['owner_draws_assigned']}")
     console.print(f"    Owner Contributions:    {state.stats['owner_contributions_assigned']}")
     console.print(f"    Mortgage Payments:      {state.stats['mortgage_payments_assigned']}")
+    console.print(f"    Smart Transfers:        {state.stats['smart_transfers_assigned']}")
     console.print(f"    BGS Expenses:           {state.stats['bgs_expenses_assigned']}")
     console.print(f"    MHB Expenses:           {state.stats['mhb_expenses_assigned']}")
     console.print(f"    CSB Expenses:           {state.stats['csb_expenses_assigned']}")
