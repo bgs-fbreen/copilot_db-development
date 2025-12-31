@@ -20,19 +20,19 @@ def gl_list(account_type):
     
     if account_type:
         query = """
-            SELECT code, name, account_type
-            FROM acc.bank_account
-            WHERE status = 'active'
+            SELECT gl_account_code as code, description as name, account_type
+            FROM acc.gl_accounts
+            WHERE is_active = true
               AND account_type ILIKE %s
-            ORDER BY code
+            ORDER BY gl_account_code
         """
         codes = execute_query(query, (f'%{account_type}%',))
     else:
         query = """
-            SELECT code, name, account_type
-            FROM acc.bank_account
-            WHERE status = 'active'
-            ORDER BY account_type, code
+            SELECT gl_account_code as code, description as name, account_type
+            FROM acc.gl_accounts
+            WHERE is_active = true
+            ORDER BY account_type, gl_account_code
         """
         codes = execute_query(query)
     
@@ -70,20 +70,20 @@ def gl_search():
         # Empty search or 'all' shows all codes
         if not search_term or search_term.lower() == 'all':
             query = """
-                SELECT code, name, account_type
-                FROM acc.bank_account
-                WHERE status = 'active'
-                ORDER BY account_type, code
+                SELECT gl_account_code as code, description as name, account_type
+                FROM acc.gl_accounts
+                WHERE is_active = true
+                ORDER BY account_type, gl_account_code
             """
             codes = execute_query(query)
         else:
             # Search by code or name
             query = """
-                SELECT code, name, account_type
-                FROM acc.bank_account
-                WHERE status = 'active'
-                  AND (code ILIKE %s OR name ILIKE %s)
-                ORDER BY code
+                SELECT gl_account_code as code, description as name, account_type
+                FROM acc.gl_accounts
+                WHERE is_active = true
+                  AND (gl_account_code ILIKE %s OR description ILIKE %s)
+                ORDER BY gl_account_code
             """
             search = f'%{search_term}%'
             codes = execute_query(query, (search, search))
