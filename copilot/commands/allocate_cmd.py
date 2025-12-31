@@ -577,15 +577,10 @@ def get_skipped_accounts(entity, period):
     return execute_query(query, (entity, period))
 
 
-def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
-    """Find Business-to-Business transfers only - matching amounts on same date, opposite signs.
-    This is used for Step 2 (Business-to-Business Loans).
-    
-    If entity is None, find transfers across ALL business entities."""
-    
-    # Get entity types from database
-    # Note: If acc.entity table doesn't exist yet (migration 012 not run),
-    # gracefully degrade to treating all entities as 'business' (old behavior)
+def get_entity_type_map():
+    """Get entity type mapping from database.
+    Returns dict mapping entity codes to entity types (business, personal, support).
+    If acc.entity table doesn't exist (migration 012 not run), returns empty dict."""
     entity_type_map = {}
     try:
         entity_types = execute_query("""
@@ -595,6 +590,18 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     except Exception:
         # Migration 012 not run yet - use default behavior
         pass
+    return entity_type_map
+
+
+def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
+    """Find Business-to-Business transfers only - matching amounts on same date, opposite signs.
+    This is used for Step 2 (Business-to-Business Loans).
+    
+    If entity is None, find transfers across ALL business entities.
+    Returns: (transfers_list, entity_type_map)"""
+    
+    # Get entity types from database
+    entity_type_map = get_entity_type_map()
     
     # Query for cross-entity transfers (different entities)
     cross_entity_query = """
@@ -660,8 +667,6 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
         if from_type == 'business' and to_type == 'business' and 'mortgage:' not in to_account_lower:
             business_to_business.append(row)
     
-    # Store entity_type_map separately to avoid duplicating in every row
-    # The caller will have access to entity_type_map already
     return business_to_business, entity_type_map
 
 
@@ -860,20 +865,18 @@ def assign_intercompany(from_id, to_id, from_entity, to_entity, from_account, to
     execute_command(update_query, (gl_code, match_method, from_id, to_id))
 
 
-def detect_owner_draws(entity, start_date, end_date, active_accounts=None):
+def detect_owner_draws(entity, start_date, end_date, active_accounts, entity_type_map):
     """Find owner draws: Business → Personal/Support transfers.
-    If entity is None, find draws from all business entities."""
+    If entity is None, find draws from all business entities.
     
-    # Get entity types from database
-    entity_type_map = {}
-    try:
-        entity_types = execute_query("""
-            SELECT code, entity_type FROM acc.entity
-        """)
-        entity_type_map = {e['code']: e['entity_type'] for e in entity_types}
-    except Exception:
-        # Migration 012 not run yet - use default behavior
-        pass
+    Args:
+        entity: Entity code to filter by (or None for all)
+        start_date: Start of date range
+        end_date: End of date range
+        active_accounts: List of active account codes
+        entity_type_map: Dict mapping entity codes to entity types
+        
+    Returns: List of owner draw transactions"""
     
     # Query for Business → Personal/Support transfers
     query = """
@@ -938,20 +941,18 @@ def detect_owner_draws(entity, start_date, end_date, active_accounts=None):
     return owner_draws
 
 
-def detect_owner_contributions(entity, start_date, end_date, active_accounts=None):
+def detect_owner_contributions(entity, start_date, end_date, active_accounts, entity_type_map):
     """Find owner contributions: Personal/Support → Business transfers.
-    If entity is None, find contributions to all business entities."""
+    If entity is None, find contributions to all business entities.
     
-    # Get entity types from database
-    entity_type_map = {}
-    try:
-        entity_types = execute_query("""
-            SELECT code, entity_type FROM acc.entity
-        """)
-        entity_type_map = {e['code']: e['entity_type'] for e in entity_types}
-    except Exception:
-        # Migration 012 not run yet - use default behavior
-        pass
+    Args:
+        entity: Entity code to filter by (or None for all)
+        start_date: Start of date range
+        end_date: End of date range
+        active_accounts: List of active account codes
+        entity_type_map: Dict mapping entity codes to entity types
+        
+    Returns: List of owner contribution transactions"""
     
     # Query for Personal/Support → Business transfers
     query = """
@@ -1362,7 +1363,7 @@ def allocation_wizard(entity, period):
     console.print(f"\n[bold cyan]STEP 3 of {state.total_steps}: Owner Draws[/bold cyan]")
     console.print("─" * 63)
     
-    owner_draws = detect_owner_draws(entity, start_date, end_date, state.active_accounts)
+    owner_draws = detect_owner_draws(entity, start_date, end_date, state.active_accounts, entity_type_map)
     
     if owner_draws:
         console.print(f"[green]Found {len(owner_draws)} owner draws (Business → Personal/Support):[/green]\n")
@@ -1422,7 +1423,7 @@ def allocation_wizard(entity, period):
     console.print(f"\n[bold cyan]STEP 4 of {state.total_steps}: Owner Contributions[/bold cyan]")
     console.print("─" * 63)
     
-    owner_contributions = detect_owner_contributions(entity, start_date, end_date, state.active_accounts)
+    owner_contributions = detect_owner_contributions(entity, start_date, end_date, state.active_accounts, entity_type_map)
     
     if owner_contributions:
         console.print(f"[green]Found {len(owner_contributions)} owner contributions (Personal/Support → Business):[/green]\n")
