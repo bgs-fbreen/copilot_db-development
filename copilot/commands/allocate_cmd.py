@@ -1204,6 +1204,73 @@ def get_entity_expenses(entity_code, start_date, end_date, active_accounts=None)
     return execute_query(query, tuple(params))
 
 
+def detect_and_assign_single_transfers(entity, start_date, end_date, active_accounts=None):
+    """
+    Detect and auto-assign single-sided transfers using smart transfer detection.
+    Returns count of transactions assigned.
+    
+    This catches transfers where only one side is visible (no matching opposite transaction).
+    """
+    # Get all TODO transactions for the entity
+    query = """
+        SELECT 
+            id,
+            entity,
+            description
+        FROM acc.bank_staging
+        WHERE normalized_date BETWEEN %s AND %s
+          AND gl_account_code = 'TODO'
+    """
+    
+    params = [start_date, end_date]
+    
+    if entity:
+        query += " AND entity = %s"
+        params.append(entity)
+    
+    # Filter by active accounts if provided
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        query += f" AND source_account_code IN ({placeholders})"
+        params.extend(active_accounts)
+    
+    transactions = execute_query(query, tuple(params))
+    
+    if not transactions:
+        return 0
+    
+    # Try to detect and assign transfers
+    assigned_count = 0
+    
+    for trans in transactions:
+        gl_code = detect_transfer_gl_code(trans['description'], trans['entity'])
+        if gl_code:
+            # Determine match_method based on GL code
+            if gl_code.startswith('mortgage:'):
+                match_method = 'mortgage'
+            elif gl_code.startswith('loan:'):
+                match_method = 'loan'
+            elif gl_code.startswith('draw:'):
+                match_method = 'draw'
+            elif gl_code.startswith('contrib:'):
+                match_method = 'contribution'
+            else:
+                match_method = 'transfer'
+            
+            # Update the transaction
+            update_query = """
+                UPDATE acc.bank_staging
+                SET gl_account_code = %s,
+                    match_method = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            execute_command(update_query, (gl_code, match_method, trans['id']))
+            assigned_count += 1
+    
+    return assigned_count
+
+
 def display_progress_bar(allocated, total, width=20):
     """Display ASCII progress bar"""
     if total == 0:
@@ -1636,6 +1703,22 @@ def allocation_wizard(entity, period):
     else:
         console.print("[dim]No mortgage payments detected[/dim]\n")
         input("Press Enter to continue...")
+    
+    # STEP 5.5: Auto-detect Single-Sided Transfers
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 5.5 of {state.total_steps}: Smart Transfer Detection[/bold cyan]")
+    console.print("─" * 63)
+    console.print("[dim]Scanning for unmatched transfers with account numbers in description...[/dim]\n")
+    
+    single_transfer_count = detect_and_assign_single_transfers(entity, start_date, end_date, state.active_accounts)
+    
+    if single_transfer_count > 0:
+        console.print(f"[green]✓ Auto-assigned {single_transfer_count} single-sided transfers using smart detection![/green]\n")
+        state.stats['related_party_loans_assigned'] += single_transfer_count  # Count towards appropriate category
+    else:
+        console.print("[dim]No additional single-sided transfers detected[/dim]\n")
+    
+    input("Press Enter to continue...")
     
     # STEP 6: BGS Business Expenses
     clear_screen()
