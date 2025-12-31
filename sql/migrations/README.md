@@ -8,11 +8,27 @@ To run a migration, use `psql` to execute the SQL file against your database:
 
 ```bash
 # Using environment variables from .env (recommended)
-psql -h $DB_HOST -U $DB_USER -d $DB_NAME -f sql/migrations/011_add_wizard_account_status_unique_constraint.sql
+psql -h $DB_HOST -U $DB_USER -d $DB_NAME -f sql/migrations/012_add_entity_type.sql
 
 # Or with explicit connection details (replace with your values)
-psql -h YOUR_HOST -U YOUR_USER -d YOUR_DATABASE -f sql/migrations/011_add_wizard_account_status_unique_constraint.sql
+psql -h YOUR_HOST -U YOUR_USER -d YOUR_DATABASE -f sql/migrations/012_add_entity_type.sql
 ```
+
+## Migration 012: Add Entity Table with Entity Types
+
+**Issue:** The `copilot allocate wizard` command incorrectly flags transfers that are NOT intercompany:
+- Same-entity transfers (`bgs:account → bgs:debit`) shown as intercompany
+- Personal account transfers (`bgs → csb`) shown as intercompany  
+- Support account transfers (`mhb → tax`) shown as intercompany
+
+**Fix:** This migration creates an `acc.entity` table with an `entity_type` column to distinguish between:
+- **business** entities (eligible for intercompany transfers)
+- **personal** entities (not eligible for intercompany)
+- **support** entities (not eligible for intercompany)
+
+**Safe to run:** Yes, this migration is idempotent and can be run multiple times safely.
+
+**Required for:** Correct intercompany detection in the allocation wizard
 
 ## Migration 011: Fix wizard_account_status Unique Constraint
 
@@ -41,6 +57,7 @@ psql -h YOUR_HOST -U YOUR_USER -d YOUR_DATABASE -f sql/migrations/011_add_wizard
 | 009 | Add bank account entity | Yes |
 | 010 | Create wizard_account_status table | Yes |
 | 011 | Add wizard_account_status unique constraint | Yes |
+| 012 | Add entity table with entity_type column | Yes |
 
 ## Notes
 
