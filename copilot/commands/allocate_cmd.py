@@ -815,6 +815,7 @@ def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
         FROM acc.bank_staging bs
         LEFT JOIN acc.vendor_gl_patterns vp 
             ON bs.description ILIKE '%%' || vp.pattern || '%%'
+            AND (vp.entity IS NULL OR vp.entity = bs.entity)
             AND vp.gl_account_code LIKE 'loan:%%'
         WHERE bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
@@ -856,7 +857,7 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_acco
         FROM acc.bank_staging bs
         LEFT JOIN acc.vendor_gl_patterns vp 
             ON bs.description ILIKE '%%' || vp.pattern || '%%'
-            AND vp.entity = bs.entity
+            AND (vp.entity IS NULL OR vp.entity = bs.entity)
         WHERE bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
     """
@@ -2009,9 +2010,9 @@ def apply_patterns(dry_run, entity, from_date, to_date):
     """
     pattern_params = []
     
-    # If entity filter is specified, only get patterns for that entity
+    # If entity filter is specified, get patterns for that entity AND wildcard patterns (entity IS NULL)
     if entity:
-        pattern_query += " AND entity = %s"
+        pattern_query += " AND (entity IS NULL OR entity = %s)"
         pattern_params.append(entity)
     
     pattern_query += " ORDER BY priority DESC, id"
@@ -2037,8 +2038,10 @@ def apply_patterns(dry_run, entity, from_date, to_date):
         pattern_params = params.copy()
         
         # Add pattern entity filter (pattern['entity'] comes from DB, safe)
-        pattern_where_clauses.append("bs.entity = %s")
-        pattern_params.append(pattern['entity'])
+        # If pattern entity is NULL, it's a wildcard that matches all entities
+        if pattern['entity'] is not None:
+            pattern_where_clauses.append("bs.entity = %s")
+            pattern_params.append(pattern['entity'])
         
         # Join static SQL clauses (no user input in the structure)
         pattern_where_clause = " AND ".join(pattern_where_clauses)
