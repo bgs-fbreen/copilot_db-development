@@ -12,6 +12,9 @@ from copilot.db import execute_query, get_connection, execute_command
 
 console = Console()
 
+# Business account entity codes for Step 2 (Business-to-Business Loans)
+BUSINESS_ACCOUNTS = {'bgs', 'mhb'}
+
 
 def clear_screen():
     """Clear the terminal screen"""
@@ -597,8 +600,11 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     """Find Business-to-Business transfers only - matching amounts on same date, opposite signs.
     This is used for Step 2 (Business-to-Business Loans).
     
+    Only includes transfers where BOTH entities are in BUSINESS_ACCOUNTS (bgs, mhb).
+    
     If entity is None, find transfers across ALL business entities.
-    Returns: (transfers_list, entity_type_map)"""
+    Returns: (transfers_list, entity_type_map)
+    Note: entity_type_map is returned for use by downstream classify_transfer() function."""
     
     # Get entity types from database
     entity_type_map = get_entity_type_map()
@@ -658,13 +664,13 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     # Filter to only Business → Business transfers
     business_to_business = []
     for row in cross_entity_results or []:
-        from_type = entity_type_map.get(row['from_entity'], 'business')
-        to_type = entity_type_map.get(row['to_entity'], 'business')
+        from_entity = row['from_entity']
+        to_entity = row['to_entity']
         
-        # Only include Business → Business transfers
+        # Only include if BOTH entities are business accounts
         # Exclude mortgage destinations (those are handled in Step 5)
         to_account_lower = row['to_account'].lower()
-        if from_type == 'business' and to_type == 'business' and 'mortgage:' not in to_account_lower:
+        if from_entity in BUSINESS_ACCOUNTS and to_entity in BUSINESS_ACCOUNTS and 'mortgage:' not in to_account_lower:
             business_to_business.append(row)
     
     return business_to_business, entity_type_map
