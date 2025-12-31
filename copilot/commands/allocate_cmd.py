@@ -782,8 +782,8 @@ def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
             vp.gl_account_code as suggested_code
         FROM acc.bank_staging bs
         LEFT JOIN acc.vendor_gl_patterns vp 
-            ON bs.description ILIKE '%' || vp.pattern || '%'
-            AND vp.gl_account_code LIKE 'loan:%'
+            ON bs.description ILIKE '%%' || vp.pattern || '%%'
+            AND vp.gl_account_code LIKE 'loan:%%'
         WHERE bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
           AND (
@@ -823,7 +823,7 @@ def get_recurring_vendors(entity, start_date, end_date, min_count=5, active_acco
             vp.gl_account_code as suggested_code
         FROM acc.bank_staging bs
         LEFT JOIN acc.vendor_gl_patterns vp 
-            ON bs.description ILIKE '%' || vp.pattern || '%'
+            ON bs.description ILIKE '%%' || vp.pattern || '%%'
             AND vp.entity = bs.entity
         WHERE bs.normalized_date BETWEEN %s AND %s
           AND bs.gl_account_code = 'TODO'
