@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS acc.vendor_gl_patterns (
     pattern_type TEXT,
     gl_account_code VARCHAR(100) NOT NULL,
     priority INTEGER DEFAULT 100,
-    entity VARCHAR(50) NOT NULL,
+    entity VARCHAR(50),
     category_hint TEXT,
     notes TEXT,
     is_active BOOLEAN DEFAULT true,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS acc.vendor_gl_patterns (
 COMMENT ON TABLE acc.vendor_gl_patterns IS 'Patterns for automatic GL code assignment based on transaction description';
 COMMENT ON COLUMN acc.vendor_gl_patterns.pattern IS 'Case-insensitive pattern to match against description (ILIKE)';
 COMMENT ON COLUMN acc.vendor_gl_patterns.gl_account_code IS 'GL account code to assign when pattern matches';
-COMMENT ON COLUMN acc.vendor_gl_patterns.entity IS 'Entity this pattern applies to';
+COMMENT ON COLUMN acc.vendor_gl_patterns.entity IS 'Entity this pattern applies to. NULL means pattern applies to all entities (wildcard).';
 COMMENT ON COLUMN acc.vendor_gl_patterns.priority IS 'Higher priority patterns are checked first (default 100)';
 
 CREATE INDEX idx_vendor_pattern ON acc.vendor_gl_patterns(pattern);
@@ -119,6 +119,7 @@ DECLARE
     matched_confidence INTEGER;
 BEGIN
     -- Try to find a matching pattern for this entity and description
+    -- Patterns with NULL entity are wildcards that match all entities
     SELECT 
         vp.gl_account_code,
         vp.priority
@@ -126,7 +127,7 @@ BEGIN
         matched_gl_code,
         matched_confidence
     FROM acc.vendor_gl_patterns vp
-    WHERE vp.entity = NEW.entity
+    WHERE (vp.entity IS NULL OR vp.entity = NEW.entity)
       AND vp.is_active = true
       AND NEW.description ILIKE '%' || vp.pattern || '%'
     ORDER BY vp.priority DESC, vp.id
@@ -154,7 +155,7 @@ CREATE TRIGGER trg_apply_fuzzy_matching
     EXECUTE FUNCTION acc.fn_apply_fuzzy_matching();
 
 COMMENT ON TRIGGER trg_apply_fuzzy_matching ON acc.bank_staging IS 
-    'Automatically applies GL code based on vendor patterns when transaction is inserted';
+    'Automatically applies GL code based on vendor patterns. Supports wildcard patterns where entity IS NULL.';
 
 -- ============================================================================
 -- TRIGGER: DETECT MANUAL CORRECTIONS AND CREATE PATTERN SUGGESTIONS
