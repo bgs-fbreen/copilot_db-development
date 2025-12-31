@@ -14,6 +14,8 @@ console = Console()
 
 # Business account entity codes for Step 2 (Business-to-Business Loans)
 BUSINESS_ACCOUNTS = {'bgs', 'mhb'}
+# Personal and support account entity codes for Steps 3 & 4 (Owner Draws and Contributions)
+PERSONAL_ACCOUNTS = {'csb', 'tax', 'medical'}
 
 
 def clear_screen():
@@ -936,12 +938,12 @@ def detect_owner_draws(entity, start_date, end_date, active_accounts, entity_typ
     
     # Filter to only Business → Personal/Support transfers
     owner_draws = []
-    for row in results:
-        from_type = entity_type_map.get(row['from_entity'], 'business')
-        to_type = entity_type_map.get(row['to_entity'], 'business')
+    for row in results or []:
+        from_entity = row['from_entity']
+        to_entity = row['to_entity']
         
         # Check for Business → Personal/Support
-        if from_type == 'business' and to_type in ('personal', 'support'):
+        if from_entity in BUSINESS_ACCOUNTS and to_entity in PERSONAL_ACCOUNTS:
             owner_draws.append(row)
     
     return owner_draws
@@ -1012,12 +1014,12 @@ def detect_owner_contributions(entity, start_date, end_date, active_accounts, en
     
     # Filter to only Personal/Support → Business transfers
     owner_contributions = []
-    for row in results:
-        from_type = entity_type_map.get(row['from_entity'], 'business')
-        to_type = entity_type_map.get(row['to_entity'], 'business')
+    for row in results or []:
+        from_entity = row['from_entity']
+        to_entity = row['to_entity']
         
         # Check for Personal/Support → Business
-        if from_type in ('personal', 'support') and to_type == 'business':
+        if from_entity in PERSONAL_ACCOUNTS and to_entity in BUSINESS_ACCOUNTS:
             owner_contributions.append(row)
     
     return owner_contributions
