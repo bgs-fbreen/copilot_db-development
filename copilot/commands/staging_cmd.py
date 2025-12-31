@@ -5,6 +5,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 from copilot.db import execute_query, execute_command
+from copilot.commands.allocate_cmd import detect_transfer_gl_code
 
 console = Console()
 
@@ -528,6 +529,13 @@ def assign_todo(entity):
         console.print("[bold cyan] Recommendations (based on YOUR data):[/bold cyan]")
         console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
         
+        # 0. Smart transfer detection (highest priority)
+        detected_gl_code = detect_transfer_gl_code(description, entity)
+        if detected_gl_code:
+            console.print("[bold green] 🎯 Smart Transfer Detection:[/bold green]")
+            console.print(f"   • Auto-detected transfer → [bold green]{detected_gl_code}[/bold green]")
+            console.print()
+        
         # 1. Check existing patterns
         existing = get_existing_patterns(description, entity)
         if existing:
@@ -592,7 +600,15 @@ def assign_todo(entity):
         console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
         
         # Get GL code assignment
-        gl_code = console.input("[bold yellow]Enter GL code (or '?' for full list): [/bold yellow]")
+        # If smart transfer detection found a GL code, offer it as default
+        if detected_gl_code:
+            prompt_text = f"[bold yellow]Enter GL code (or press Enter for '{detected_gl_code}', or '?' for full list): [/bold yellow]"
+            gl_code = console.input(prompt_text).strip()
+            # If user just presses Enter, use the detected code
+            if not gl_code:
+                gl_code = detected_gl_code
+        else:
+            gl_code = console.input("[bold yellow]Enter GL code (or '?' for full list): [/bold yellow]")
         
         if gl_code == '?':
             # Show full GL code list

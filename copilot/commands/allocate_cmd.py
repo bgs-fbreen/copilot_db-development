@@ -47,6 +47,97 @@ def find_matching_payee_alias(payee):
     return result[0] if result else None
 
 
+def lookup_account_by_number(account_number):
+    """
+    Lookup bank account by account_number field.
+    
+    Args:
+        account_number: Account number string to search for
+        
+    Returns:
+        Dictionary with 'entity', 'code', and 'type' fields, or None if not found
+    """
+    result = execute_query("""
+        SELECT 
+            entity,
+            code,
+            account_type as type
+        FROM acc.bank_account
+        WHERE account_number = %s
+        LIMIT 1
+    """, (account_number,))
+    
+    return result[0] if result else None
+
+
+def detect_transfer_gl_code(description, source_entity):
+    """
+    Parse account number from description, lookup target entity,
+    and return appropriate GL code.
+    
+    Args:
+        description: Transaction description string
+        source_entity: Entity code where the transaction originated
+        
+    Returns:
+        GL code string or None if transfer cannot be detected
+    """
+    import re
+    
+    # 1. Detect direction
+    desc_upper = description.upper()
+    if 'TRANSFER TO' in desc_upper or 'TRF TO' in desc_upper:
+        direction = 'outgoing'
+    elif 'TRANSFER FR' in desc_upper or 'TRF FR' in desc_upper:
+        direction = 'incoming'
+    else:
+        return None
+    
+    # 2. Extract account number
+    # Try mortgage pattern first
+    mortgage_match = re.search(r'LOAN ACCT\s*0*(\d+)\s*NOTE NO\s*0*(\d+)', desc_upper)
+    if mortgage_match:
+        account_num = f"{mortgage_match.group(1)}-{mortgage_match.group(2)}"
+    else:
+        # Try checking account pattern
+        checking_match = re.search(r'ACC\s*0*(\d+)', desc_upper)
+        if checking_match:
+            account_num = checking_match.group(1)
+        else:
+            return None
+    
+    # 3. Lookup account in database
+    target_account = lookup_account_by_number(account_num)
+    if not target_account:
+        return None
+    
+    target_entity = target_account['entity']
+    target_code = target_account['code']
+    
+    # 4. Determine GL code based on entities and direction
+    if 'mortgage' in target_code.lower():
+        # Extract property name from code (e.g., mhb:mortgage:711pine -> 711pine)
+        property_name = target_code.split(':')[-1]
+        return f"mortgage:{property_name}"
+    
+    if direction == 'outgoing':
+        if source_entity in BUSINESS_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return f"loan:{source_entity}-to-{target_entity}"
+        elif source_entity in BUSINESS_ACCOUNTS and target_entity in PERSONAL_ACCOUNTS:
+            return "draw:fbreen"
+        elif source_entity in PERSONAL_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return "contrib:fbreen"
+    else:  # incoming
+        if source_entity in BUSINESS_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return f"loan:{target_entity}-to-{source_entity}"
+        elif source_entity in PERSONAL_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return "draw:fbreen"
+        elif source_entity in BUSINESS_ACCOUNTS and target_entity in PERSONAL_ACCOUNTS:
+            return "contrib:fbreen"
+    
+    return None
+
+
 @click.group()
 def allocate():
     """Allocate and categorize transactions"""
