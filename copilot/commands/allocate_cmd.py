@@ -2003,9 +2003,17 @@ def apply_patterns(dry_run, entity, from_date, to_date):
         SELECT id, pattern, pattern_type, gl_account_code, entity
         FROM acc.vendor_gl_patterns
         WHERE is_active = true
-        ORDER BY priority DESC, id
     """
-    patterns = execute_query(pattern_query)
+    pattern_params = []
+    
+    # If entity filter is specified, only get patterns for that entity
+    if entity:
+        pattern_query += " AND entity = %s"
+        pattern_params.append(entity)
+    
+    pattern_query += " ORDER BY priority DESC, id"
+    
+    patterns = execute_query(pattern_query, tuple(pattern_params) if pattern_params else None)
     
     if not patterns:
         console.print("[yellow]No active patterns found[/yellow]\n")
@@ -2020,11 +2028,11 @@ def apply_patterns(dry_run, entity, from_date, to_date):
         like_condition, like_param = build_like_condition(pattern['pattern_type'], pattern['pattern'])
         
         # Query to find matching transactions
-        # Note: We need to add pattern's entity to where clause to avoid conflicts
+        # Pattern entity is already filtered in pattern_query, so we use it directly
         pattern_where_clauses = where_clauses.copy()
         pattern_params = params.copy()
         
-        # Add pattern entity filter - this ensures we only match within the pattern's entity
+        # Add pattern entity filter
         pattern_where_clauses.append("bs.entity = %s")
         pattern_params.append(pattern['entity'])
         
@@ -2089,18 +2097,15 @@ def apply_patterns(dry_run, entity, from_date, to_date):
             
             if matches:
                 # Update all matching transactions for this pattern
-                # Validate that all IDs are integers to prevent SQL injection
-                transaction_ids = []
-                for m in matches:
-                    if not isinstance(m['id'], int):
-                        console.print(f"[red]Error: Invalid transaction ID type: {type(m['id'])}[/red]")
-                        continue
-                    transaction_ids.append(m['id'])
+                # Extract IDs (already validated as integers from database query)
+                transaction_ids = [m['id'] for m in matches if isinstance(m['id'], int)]
                 
                 if not transaction_ids:
+                    console.print(f"[red]Error: No valid transaction IDs found for pattern {pattern['pattern']}[/red]")
                     continue
                 
-                # Build UPDATE query with IN clause
+                # Build UPDATE query with parameterized IN clause
+                # Generate one placeholder per ID
                 placeholders = ','.join(['%s'] * len(transaction_ids))
                 update_query = f"""
                     UPDATE acc.bank_staging
@@ -2110,6 +2115,7 @@ def apply_patterns(dry_run, entity, from_date, to_date):
                     WHERE id IN ({placeholders})
                 """
                 
+                # Combine GL code with all transaction IDs
                 update_params = [pattern['gl_account_code']] + transaction_ids
                 execute_command(update_query, tuple(update_params))
                 
