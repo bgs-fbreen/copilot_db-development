@@ -42,7 +42,7 @@ def get_existing_patterns(description, entity):
         FROM acc.vendor_gl_patterns
         WHERE %s ILIKE '%' || pattern || '%'
           AND entity = %s
-          AND active = true
+          AND is_active = true
         ORDER BY priority DESC
     """
     return execute_query(query, (description, entity))
@@ -84,60 +84,67 @@ def assign_gl_code(description, gl_code, entity, notes=None):
         tuple: (count of updated transactions, 'created' or 'updated' for pattern)
     """
     
-    # Update bank_staging
-    update_query = """
-        UPDATE acc.bank_staging
-        SET gl_account_code = %s,
-            match_method = 'manual',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE description = %s
-          AND gl_account_code = 'TODO'
-          AND entity = %s
-    """
-    
-    # Count affected rows
-    count_query = """
-        SELECT COUNT(*) as cnt
-        FROM acc.bank_staging
-        WHERE description = %s
-          AND gl_account_code = 'TODO'
-          AND entity = %s
-    """
-    count_result = execute_query(count_query, (description, entity))
-    count = count_result[0]['cnt'] if count_result else 0
-    
-    # Execute update
-    execute_command(update_query, (gl_code, description, entity))
-    
-    # Create or update pattern for future imports
-    pattern = description
-    
-    # Check if pattern exists
-    check_query = """
-        SELECT id FROM acc.vendor_gl_patterns
-        WHERE pattern = %s AND entity = %s
-    """
-    existing = execute_query(check_query, (pattern, entity))
-    
-    pattern_action = 'updated' if existing else 'created'
-    
-    if existing:
-        # Update existing pattern
-        update_pattern_query = """
-            UPDATE acc.vendor_gl_patterns
+    try:
+        # Count affected rows
+        count_query = """
+            SELECT COUNT(*) as cnt
+            FROM acc.bank_staging
+            WHERE description = %s
+              AND gl_account_code = 'TODO'
+              AND entity = %s
+        """
+        count_result = execute_query(count_query, (description, entity))
+        count = count_result[0]['cnt'] if count_result else 0
+        
+        # Update bank_staging
+        update_query = """
+            UPDATE acc.bank_staging
             SET gl_account_code = %s,
-                notes = %s,
+                match_method = 'manual',
                 updated_at = CURRENT_TIMESTAMP
+            WHERE description = %s
+              AND gl_account_code = 'TODO'
+              AND entity = %s
+        """
+        execute_command(update_query, (gl_code, description, entity))
+        
+    except Exception as e:
+        console.print(f"[red]Error updating transactions: {e}[/red]")
+        raise
+    
+    try:
+        # Create or update pattern for future imports
+        pattern = description
+        
+        # Check if pattern exists
+        check_query = """
+            SELECT id FROM acc.vendor_gl_patterns
             WHERE pattern = %s AND entity = %s
         """
-        execute_command(update_pattern_query, (gl_code, notes, pattern, entity))
-    else:
-        # Insert new pattern
-        insert_pattern_query = """
-            INSERT INTO acc.vendor_gl_patterns (pattern, gl_account_code, entity, notes, priority)
-            VALUES (%s, %s, %s, %s, 100)
-        """
-        execute_command(insert_pattern_query, (pattern, gl_code, entity, notes))
+        existing = execute_query(check_query, (pattern, entity))
+        
+        pattern_action = 'updated' if existing else 'created'
+        
+        if existing:
+            # Update existing pattern
+            update_pattern_query = """
+                UPDATE acc.vendor_gl_patterns
+                SET gl_account_code = %s,
+                    notes = %s
+                WHERE pattern = %s AND entity = %s
+            """
+            execute_command(update_pattern_query, (gl_code, notes, pattern, entity))
+        else:
+            # Insert new pattern
+            insert_pattern_query = """
+                INSERT INTO acc.vendor_gl_patterns (pattern, gl_account_code, entity, notes, priority)
+                VALUES (%s, %s, %s, %s, 100)
+            """
+            execute_command(insert_pattern_query, (pattern, gl_code, entity, notes))
+            
+    except Exception as e:
+        console.print(f"[red]Error updating pattern: {e}[/red]")
+        raise
     
     return count, pattern_action
 
