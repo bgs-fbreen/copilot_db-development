@@ -578,13 +578,10 @@ def get_skipped_accounts(entity, period):
 
 
 def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
-    """Find all internal transfers - matching amounts on same date, opposite signs.
-    Includes:
-    - Cross-entity transfers (business, personal, support)
-    - Same-entity transfers (different accounts within same entity)
-    - Mortgage payments (to accounts containing 'mortgage:')
+    """Find Business-to-Business transfers only - matching amounts on same date, opposite signs.
+    This is used for Step 2 (Business-to-Business Loans).
     
-    If entity is None, find transfers across ALL entities."""
+    If entity is None, find transfers across ALL business entities."""
     
     # Get entity types from database
     # Note: If acc.entity table doesn't exist yet (migration 012 not run),
@@ -625,33 +622,6 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
           AND b.gl_account_code = 'TODO'
     """
     
-    # Query for same-entity transfers (different accounts within same entity)
-    same_entity_query = """
-        SELECT 
-            a.id as from_id,
-            a.normalized_date,
-            a.entity as from_entity,
-            a.source_account_code as from_account,
-            a.description as from_desc,
-            a.amount as from_amount,
-            b.id as to_id,
-            b.entity as to_entity,
-            b.source_account_code as to_account,
-            b.description as to_desc,
-            b.amount as to_amount
-        FROM acc.bank_staging a
-        JOIN acc.bank_staging b 
-            ON a.normalized_date = b.normalized_date
-            AND a.amount = -b.amount
-            AND a.entity = b.entity
-            AND a.source_account_code != b.source_account_code
-            AND a.id < b.id
-        WHERE a.amount < 0
-          AND a.normalized_date BETWEEN %s AND %s
-          AND a.gl_account_code = 'TODO'
-          AND b.gl_account_code = 'TODO'
-    """
-    
     params = [start_date, end_date]
     
     # If specific entity, filter to transfers involving that entity
@@ -670,7 +640,7 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
         account_filter = f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
         account_params = active_accounts + active_accounts
     
-    # Execute both queries and combine results
+    # Execute query
     all_params = params + entity_params + account_params
     
     cross_entity_results = execute_query(
@@ -678,17 +648,21 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
         tuple(all_params)
     )
     
-    same_entity_results = execute_query(
-        same_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
-        tuple(all_params)
-    )
-    
-    # Combine and return all results (no filtering by entity type - classification handles it)
-    all_results = (cross_entity_results or []) + (same_entity_results or [])
+    # Filter to only Business → Business transfers
+    business_to_business = []
+    for row in cross_entity_results or []:
+        from_type = entity_type_map.get(row['from_entity'], 'business')
+        to_type = entity_type_map.get(row['to_entity'], 'business')
+        
+        # Only include Business → Business transfers
+        # Exclude mortgage destinations (those are handled in Step 5)
+        to_account_lower = row['to_account'].lower()
+        if from_type == 'business' and to_type == 'business' and 'mortgage:' not in to_account_lower:
+            business_to_business.append(row)
     
     # Store entity_type_map separately to avoid duplicating in every row
     # The caller will have access to entity_type_map already
-    return all_results, entity_type_map
+    return business_to_business, entity_type_map
 
 
 def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
@@ -886,6 +860,250 @@ def assign_intercompany(from_id, to_id, from_entity, to_entity, from_account, to
     execute_command(update_query, (gl_code, match_method, from_id, to_id))
 
 
+def detect_owner_draws(entity, start_date, end_date, active_accounts=None):
+    """Find owner draws: Business → Personal/Support transfers.
+    If entity is None, find draws from all business entities."""
+    
+    # Get entity types from database
+    entity_type_map = {}
+    try:
+        entity_types = execute_query("""
+            SELECT code, entity_type FROM acc.entity
+        """)
+        entity_type_map = {e['code']: e['entity_type'] for e in entity_types}
+    except Exception:
+        # Migration 012 not run yet - use default behavior
+        pass
+    
+    # Query for Business → Personal/Support transfers
+    query = """
+        SELECT 
+            a.id as from_id,
+            a.normalized_date,
+            a.entity as from_entity,
+            a.source_account_code as from_account,
+            a.description as from_desc,
+            a.amount as from_amount,
+            b.id as to_id,
+            b.entity as to_entity,
+            b.source_account_code as to_account,
+            b.description as to_desc,
+            b.amount as to_amount
+        FROM acc.bank_staging a
+        JOIN acc.bank_staging b 
+            ON a.normalized_date = b.normalized_date
+            AND a.amount = -b.amount
+            AND a.entity != b.entity
+            AND a.id < b.id
+        WHERE a.amount < 0
+          AND a.normalized_date BETWEEN %s AND %s
+          AND a.gl_account_code = 'TODO'
+          AND b.gl_account_code = 'TODO'
+    """
+    
+    params = [start_date, end_date]
+    
+    # If specific entity, filter to transfers from that entity
+    entity_filter = ""
+    entity_params = []
+    if entity:
+        entity_filter = " AND a.entity = %s"
+        entity_params = [entity]
+    
+    # Filter by active accounts if provided
+    account_filter = ""
+    account_params = []
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        account_filter = f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
+        account_params = active_accounts + active_accounts
+    
+    all_params = params + entity_params + account_params
+    
+    results = execute_query(
+        query + entity_filter + account_filter + " ORDER BY a.normalized_date",
+        tuple(all_params)
+    )
+    
+    # Filter to only Business → Personal/Support transfers
+    owner_draws = []
+    for row in results:
+        from_type = entity_type_map.get(row['from_entity'], 'business')
+        to_type = entity_type_map.get(row['to_entity'], 'business')
+        
+        # Check for Business → Personal/Support
+        if from_type == 'business' and to_type in ('personal', 'support'):
+            owner_draws.append(row)
+    
+    return owner_draws
+
+
+def detect_owner_contributions(entity, start_date, end_date, active_accounts=None):
+    """Find owner contributions: Personal/Support → Business transfers.
+    If entity is None, find contributions to all business entities."""
+    
+    # Get entity types from database
+    entity_type_map = {}
+    try:
+        entity_types = execute_query("""
+            SELECT code, entity_type FROM acc.entity
+        """)
+        entity_type_map = {e['code']: e['entity_type'] for e in entity_types}
+    except Exception:
+        # Migration 012 not run yet - use default behavior
+        pass
+    
+    # Query for Personal/Support → Business transfers
+    query = """
+        SELECT 
+            a.id as from_id,
+            a.normalized_date,
+            a.entity as from_entity,
+            a.source_account_code as from_account,
+            a.description as from_desc,
+            a.amount as from_amount,
+            b.id as to_id,
+            b.entity as to_entity,
+            b.source_account_code as to_account,
+            b.description as to_desc,
+            b.amount as to_amount
+        FROM acc.bank_staging a
+        JOIN acc.bank_staging b 
+            ON a.normalized_date = b.normalized_date
+            AND a.amount = -b.amount
+            AND a.entity != b.entity
+            AND a.id < b.id
+        WHERE a.amount < 0
+          AND a.normalized_date BETWEEN %s AND %s
+          AND a.gl_account_code = 'TODO'
+          AND b.gl_account_code = 'TODO'
+    """
+    
+    params = [start_date, end_date]
+    
+    # If specific entity, filter to transfers to that entity
+    entity_filter = ""
+    entity_params = []
+    if entity:
+        entity_filter = " AND b.entity = %s"
+        entity_params = [entity]
+    
+    # Filter by active accounts if provided
+    account_filter = ""
+    account_params = []
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        account_filter = f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
+        account_params = active_accounts + active_accounts
+    
+    all_params = params + entity_params + account_params
+    
+    results = execute_query(
+        query + entity_filter + account_filter + " ORDER BY a.normalized_date",
+        tuple(all_params)
+    )
+    
+    # Filter to only Personal/Support → Business transfers
+    owner_contributions = []
+    for row in results:
+        from_type = entity_type_map.get(row['from_entity'], 'business')
+        to_type = entity_type_map.get(row['to_entity'], 'business')
+        
+        # Check for Personal/Support → Business
+        if from_type in ('personal', 'support') and to_type == 'business':
+            owner_contributions.append(row)
+    
+    return owner_contributions
+
+
+def detect_mortgage_payments(entity, start_date, end_date, active_accounts=None):
+    """Find mortgage payments: Any account → mortgage account transfers.
+    If entity is None, find mortgage payments from all entities."""
+    
+    # Query for transfers TO accounts containing 'mortgage:'
+    query = """
+        SELECT 
+            a.id as from_id,
+            a.normalized_date,
+            a.entity as from_entity,
+            a.source_account_code as from_account,
+            a.description as from_desc,
+            a.amount as from_amount,
+            b.id as to_id,
+            b.entity as to_entity,
+            b.source_account_code as to_account,
+            b.description as to_desc,
+            b.amount as to_amount
+        FROM acc.bank_staging a
+        JOIN acc.bank_staging b 
+            ON a.normalized_date = b.normalized_date
+            AND a.amount = -b.amount
+            AND a.id < b.id
+        WHERE a.amount < 0
+          AND a.normalized_date BETWEEN %s AND %s
+          AND a.gl_account_code = 'TODO'
+          AND b.gl_account_code = 'TODO'
+          AND LOWER(b.source_account_code) LIKE '%mortgage:%'
+    """
+    
+    params = [start_date, end_date]
+    
+    # If specific entity, filter to transfers from that entity
+    entity_filter = ""
+    entity_params = []
+    if entity:
+        entity_filter = " AND a.entity = %s"
+        entity_params = [entity]
+    
+    # Filter by active accounts if provided
+    account_filter = ""
+    account_params = []
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        account_filter = f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
+        account_params = active_accounts + active_accounts
+    
+    all_params = params + entity_params + account_params
+    
+    results = execute_query(
+        query + entity_filter + account_filter + " ORDER BY a.normalized_date",
+        tuple(all_params)
+    )
+    
+    return results or []
+
+
+def get_entity_expenses(entity_code, start_date, end_date, active_accounts=None):
+    """Get unallocated expenses for a specific entity.
+    Returns transactions that need GL code assignment."""
+    
+    query = """
+        SELECT 
+            id,
+            entity,
+            normalized_date,
+            source_account_code,
+            description,
+            amount
+        FROM acc.bank_staging
+        WHERE entity = %s
+          AND normalized_date BETWEEN %s AND %s
+          AND gl_account_code = 'TODO'
+    """
+    
+    params = [entity_code, start_date, end_date]
+    
+    # Filter by active accounts if provided
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        query += f" AND source_account_code IN ({placeholders})"
+        params.extend(active_accounts)
+    
+    query += " ORDER BY normalized_date DESC"
+    
+    return execute_query(query, tuple(params))
+
+
 def display_progress_bar(allocated, total, width=20):
     """Display ASCII progress bar"""
     if total == 0:
@@ -904,11 +1122,19 @@ class WizardState:
         self.start_date = start_date
         self.end_date = end_date
         self.current_step = 1
-        self.total_steps = 5
+        self.total_steps = 10
         self.active_accounts = []  # List of non-skipped accounts
         self.active_entities = []  # List of entities with active accounts
         self.stats = {
             'related_party_loans_assigned': 0,
+            'owner_draws_assigned': 0,
+            'owner_contributions_assigned': 0,
+            'mortgage_payments_assigned': 0,
+            'bgs_expenses_assigned': 0,
+            'mhb_expenses_assigned': 0,
+            'csb_expenses_assigned': 0,
+            'medical_expenses_assigned': 0,
+            'tax_expenses_assigned': 0,
             'loans_assigned': 0,
             'recurring_assigned': 0,
             'manual_assigned': 0,
@@ -1071,15 +1297,15 @@ def allocation_wizard(entity, period):
                 console.print("[red]Invalid format. Use 'u 3'[/red]")
                 input("\nPress Enter to continue...")
     
-    # STEP 2: Related Party Loan Detection
+    # STEP 2: Business-to-Business Loans
     clear_screen()
-    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Internal Transfer Detection[/bold cyan]")
+    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Business-to-Business Loans[/bold cyan]")
     console.print("─" * 63)
     
     intercompany, entity_type_map = detect_intercompany_transfers(entity, start_date, end_date, state.active_accounts)
     
     if intercompany:
-        console.print(f"[green]Found {len(intercompany)} internal transfers:[/green]\n")
+        console.print(f"[green]Found {len(intercompany)} business-to-business transfers:[/green]\n")
         
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Date", style="cyan")
@@ -1131,202 +1357,371 @@ def allocation_wizard(entity, period):
         console.print("[dim]No internal transfers detected[/dim]\n")
         input("Press Enter to continue...")
     
-    # STEP 3: Loan/Mortgage Payments
+    # STEP 3: Owner Draws
     clear_screen()
-    console.print(f"\n[bold cyan]STEP 3 of {state.total_steps}: Loan/Mortgage Payments[/bold cyan]")
+    console.print(f"\n[bold cyan]STEP 3 of {state.total_steps}: Owner Draws[/bold cyan]")
     console.print("─" * 63)
     
-    loans = detect_loan_payments(entity, start_date, end_date, state.active_accounts)
+    owner_draws = detect_owner_draws(entity, start_date, end_date, state.active_accounts)
     
-    if loans:
-        console.print(f"[green]Found {len(loans)} potential loan payments:[/green]\n")
+    if owner_draws:
+        console.print(f"[green]Found {len(owner_draws)} owner draws (Business → Personal/Support):[/green]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("From", style="white")
+        table.add_column("To", style="white")
+        table.add_column("Amount", justify="right", style="green")
+        table.add_column("Description", style="white")
+        
+        for row in owner_draws[:10]:  # Show first 10
+            table.add_row(
+                str(row['normalized_date']),
+                row['from_entity'],
+                row['to_entity'],
+                f"${abs(row['from_amount']):,.2f}",
+                row['from_desc'][:30]
+            )
+        
+        if len(owner_draws) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(owner_draws) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        action = Prompt.ask(
+            "[a] Auto-assign draws    [r] Review one-by-one    [s] Skip",
+            choices=['a', 'r', 's'],
+            default='a'
+        )
+        
+        if action == 'a':
+            for row in owner_draws:
+                assign_intercompany(
+                    row['from_id'], 
+                    row['to_id'], 
+                    row['from_entity'], 
+                    row['to_entity'],
+                    row['from_account'],
+                    row['to_account'],
+                    entity_type_map
+                )
+                state.stats['owner_draws_assigned'] += 2
+            console.print(f"\n[green]✓ Assigned {len(owner_draws)} owner draws ({state.stats['owner_draws_assigned']} transactions)[/green]")
+            input("\nPress Enter to continue...")
+        elif action == 'r':
+            console.print("\n[yellow]Review mode not implemented yet. Use auto-assign or skip.[/yellow]")
+            input("\nPress Enter to continue...")
+    else:
+        console.print("[dim]No owner draws detected[/dim]\n")
+        input("Press Enter to continue...")
+    
+    # STEP 4: Owner Contributions
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 4 of {state.total_steps}: Owner Contributions[/bold cyan]")
+    console.print("─" * 63)
+    
+    owner_contributions = detect_owner_contributions(entity, start_date, end_date, state.active_accounts)
+    
+    if owner_contributions:
+        console.print(f"[green]Found {len(owner_contributions)} owner contributions (Personal/Support → Business):[/green]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("From", style="white")
+        table.add_column("To", style="white")
+        table.add_column("Amount", justify="right", style="green")
+        table.add_column("Description", style="white")
+        
+        for row in owner_contributions[:10]:  # Show first 10
+            table.add_row(
+                str(row['normalized_date']),
+                row['from_entity'],
+                row['to_entity'],
+                f"${abs(row['from_amount']):,.2f}",
+                row['from_desc'][:30]
+            )
+        
+        if len(owner_contributions) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(owner_contributions) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        action = Prompt.ask(
+            "[a] Auto-assign contributions    [r] Review one-by-one    [s] Skip",
+            choices=['a', 'r', 's'],
+            default='a'
+        )
+        
+        if action == 'a':
+            for row in owner_contributions:
+                assign_intercompany(
+                    row['from_id'], 
+                    row['to_id'], 
+                    row['from_entity'], 
+                    row['to_entity'],
+                    row['from_account'],
+                    row['to_account'],
+                    entity_type_map
+                )
+                state.stats['owner_contributions_assigned'] += 2
+            console.print(f"\n[green]✓ Assigned {len(owner_contributions)} owner contributions ({state.stats['owner_contributions_assigned']} transactions)[/green]")
+            input("\nPress Enter to continue...")
+        elif action == 'r':
+            console.print("\n[yellow]Review mode not implemented yet. Use auto-assign or skip.[/yellow]")
+            input("\nPress Enter to continue...")
+    else:
+        console.print("[dim]No owner contributions detected[/dim]\n")
+        input("Press Enter to continue...")
+    
+    # STEP 5: Mortgage Payments
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 5 of {state.total_steps}: Mortgage Payments[/bold cyan]")
+    console.print("─" * 63)
+    
+    mortgage_payments = detect_mortgage_payments(entity, start_date, end_date, state.active_accounts)
+    
+    if mortgage_payments:
+        console.print(f"[green]Found {len(mortgage_payments)} mortgage payments:[/green]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("From", style="white")
+        table.add_column("To Account", style="white")
+        table.add_column("Amount", justify="right", style="green")
+        table.add_column("Description", style="white")
+        
+        for row in mortgage_payments[:10]:  # Show first 10
+            table.add_row(
+                str(row['normalized_date']),
+                row['from_entity'],
+                row['to_account'],
+                f"${abs(row['from_amount']):,.2f}",
+                row['from_desc'][:30]
+            )
+        
+        if len(mortgage_payments) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(mortgage_payments) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+        
+        action = Prompt.ask(
+            "[a] Auto-assign mortgages    [r] Review one-by-one    [s] Skip",
+            choices=['a', 'r', 's'],
+            default='a'
+        )
+        
+        if action == 'a':
+            for row in mortgage_payments:
+                assign_intercompany(
+                    row['from_id'], 
+                    row['to_id'], 
+                    row['from_entity'], 
+                    row['to_entity'],
+                    row['from_account'],
+                    row['to_account'],
+                    entity_type_map
+                )
+                state.stats['mortgage_payments_assigned'] += 2
+            console.print(f"\n[green]✓ Assigned {len(mortgage_payments)} mortgage payments ({state.stats['mortgage_payments_assigned']} transactions)[/green]")
+            input("\nPress Enter to continue...")
+        elif action == 'r':
+            console.print("\n[yellow]Review mode not implemented yet. Use auto-assign or skip.[/yellow]")
+            input("\nPress Enter to continue...")
+    else:
+        console.print("[dim]No mortgage payments detected[/dim]\n")
+        input("Press Enter to continue...")
+    
+    # STEP 6: BGS Business Expenses
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 6 of {state.total_steps}: BGS Business Expenses[/bold cyan]")
+    console.print("─" * 63)
+    
+    bgs_expenses = get_entity_expenses('bgs', start_date, end_date, state.active_accounts)
+    
+    if bgs_expenses:
+        console.print(f"[green]Found {len(bgs_expenses)} unallocated BGS expenses:[/green]\n")
+        console.print("[dim]Use 'copilot staging assign-todo --entity bgs' for interactive assignment[/dim]\n")
         
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Date", style="cyan")
         table.add_column("Account", style="white")
-        table.add_column("Payee", style="white")
-        table.add_column("Amount", justify="right", style="red")
-        table.add_column("Suggested", style="yellow")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
         
-        for row in loans[:10]:  # Show first 10
-            suggested = row['suggested_code'] if row['suggested_code'] else "[dim](no pattern)[/dim]"
+        for row in bgs_expenses[:10]:  # Show first 10
+            amount_style = "green" if row['amount'] > 0 else "red"
             table.add_row(
                 str(row['normalized_date']),
                 row['source_account_code'],
-                row['description'][:25],
-                f"${row['amount']:,.2f}",
-                suggested
-            )
-        
-        if len(loans) > 10:
-            console.print(table)
-            console.print(f"[dim]... and {len(loans) - 10} more[/dim]\n")
-        else:
-            console.print(table)
-            console.print()
-        
-        action = Prompt.ask(
-            "[a] Auto-assign loans    [r] Review one-by-one    [s] Skip",
-            choices=['a', 'r', 's'],
-            default='s'
-        )
-        
-        if action == 'a':
-            console.print("\n[yellow]Auto-assign for loans requires manual verification.[/yellow]")
-            console.print("[dim]Please use 'copilot staging assign-todo' for loan payments.[/dim]")
-            input("\nPress Enter to continue...")
-        elif action == 'r':
-            console.print("\n[yellow]Review mode not implemented yet. Use staging commands.[/yellow]")
-            input("\nPress Enter to continue...")
-    else:
-        console.print("[dim]No loan payments detected[/dim]\n")
-        input("Press Enter to continue...")
-    
-    # STEP 4: Recurring Transactions
-    clear_screen()
-    console.print(f"\n[bold cyan]STEP 4 of {state.total_steps}: Recurring Transactions[/bold cyan]")
-    console.print("─" * 63)
-    
-    recurring = get_recurring_vendors(entity, start_date, end_date, active_accounts=state.active_accounts)
-    
-    if recurring:
-        console.print(f"[green]High-frequency vendors (5+ transactions):[/green]\n")
-        
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("#", justify="right", style="cyan")
-        table.add_column("Entity", style="yellow")
-        table.add_column("Vendor", style="white")
-        table.add_column("Count", justify="right")
-        table.add_column("Total", justify="right")
-        table.add_column("Suggested", style="yellow")
-        
-        for idx, row in enumerate(recurring[:15], 1):  # Show first 15
-            amount_style = "green" if row['total'] > 0 else "red"
-            suggested = row['suggested_code'] if row['suggested_code'] else "[dim](no pattern)[/dim]"
-            table.add_row(
-                str(idx),
-                row['entity'],
-                row['description'][:30],
-                str(row['cnt']),
-                f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]",
-                suggested
-            )
-        
-        if len(recurring) > 15:
-            console.print(table)
-            console.print(f"[dim]... and {len(recurring) - 15} more[/dim]\n")
-        else:
-            console.print(table)
-            console.print()
-        
-        action = Prompt.ask(
-            "[a] Auto-assign with patterns    [r] Review one-by-one    [s] Skip",
-            choices=['a', 'r', 's'],
-            default='r'
-        )
-        
-        if action == 'a':
-            # Auto-assign only those with existing patterns
-            assigned_count = 0
-            for row in recurring:
-                if row['suggested_code']:
-                    update_query = """
-                        UPDATE acc.bank_staging
-                        SET gl_account_code = %s,
-                            match_method = 'pattern',
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE description = %s
-                          AND entity = %s
-                          AND gl_account_code = 'TODO'
-                          AND normalized_date BETWEEN %s AND %s
-                    """
-                    execute_command(update_query, (row['suggested_code'], row['description'], row['entity'], start_date, end_date))
-                    assigned_count += row['cnt']
-                    state.stats['recurring_assigned'] += row['cnt']
-            
-            console.print(f"\n[green]✓ Auto-assigned {assigned_count} recurring transactions[/green]")
-            input("\nPress Enter to continue...")
-        elif action == 'r':
-            console.print("\n[yellow]Please use 'copilot staging assign-todo' for detailed assignment.[/yellow]")
-            input("\nPress Enter to continue...")
-    else:
-        console.print("[dim]No high-frequency vendors detected[/dim]\n")
-        input("Press Enter to continue...")
-    
-    # STEP 5: Remaining Transactions
-    clear_screen()
-    console.print(f"\n[bold cyan]STEP 5 of {state.total_steps}: Remaining Transactions[/bold cyan]")
-    console.print("─" * 63)
-    
-    # Import function from staging_cmd
-    from copilot.commands.staging_cmd import get_todo_grouped
-    
-    progress = get_allocation_progress(entity, start_date, end_date)
-    
-    # Get todos for all active entities when entity is None
-    todos = []
-    if entity:
-        todos = get_todo_grouped(entity)
-    else:
-        # When no specific entity, get todos from all active entities
-        for ent in state.active_entities:
-            ent_todos = get_todo_grouped(ent)
-            todos.extend(ent_todos)
-    
-    # Filter todos to only those in the period
-    todos_filtered = []
-    for todo in todos:
-        # Check if any transactions for this description are in the period
-        check_query = """
-            SELECT COUNT(*) as cnt
-            FROM acc.bank_staging
-            WHERE description = %s
-              AND gl_account_code = 'TODO'
-              AND normalized_date BETWEEN %s AND %s
-        """
-        params = [todo['description'], start_date, end_date]
-        
-        if entity:
-            check_query += " AND entity = %s"
-            params.append(entity)
-        
-        result = execute_query(check_query, tuple(params))
-        if result and result[0]['cnt'] > 0:
-            todos_filtered.append(todo)
-    
-    console.print(f"[bold]Remaining TODO: {progress['remaining']} transactions in {len(todos_filtered)} groups[/bold]\n")
-    
-    progress_bar = display_progress_bar(progress['allocated'], progress['total'])
-    console.print(f"Progress: {progress_bar}\n")
-    
-    if todos_filtered:
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("#", justify="right", style="cyan")
-        table.add_column("Description", style="white")
-        table.add_column("Count", justify="right")
-        table.add_column("Total", justify="right")
-        
-        for idx, row in enumerate(todos_filtered[:10], 1):  # Show first 10
-            amount_style = "green" if row['total'] > 0 else "red"
-            table.add_row(
-                str(idx),
                 row['description'][:40],
-                str(row['cnt']),
-                f"[{amount_style}]${row['total']:,.2f}[/{amount_style}]"
+                f"[{amount_style}]${row['amount']:,.2f}[/{amount_style}]"
             )
         
-        if len(todos_filtered) > 10:
+        if len(bgs_expenses) > 10:
             console.print(table)
-            console.print(f"[dim]... and {len(todos_filtered) - 10} more groups[/dim]\n")
+            console.print(f"[dim]... and {len(bgs_expenses) - 10} more[/dim]\n")
         else:
             console.print(table)
             console.print()
-        
-        console.print("[yellow]Use 'copilot staging assign-todo{}' for interactive assignment[/yellow]\n".format(f" --entity {entity}" if entity else ""))
     else:
-        console.print("[green]✓ All transactions allocated![/green]\n")
+        console.print("[green]✓ All BGS expenses allocated![/green]\n")
+    
+    input("Press Enter to continue...")
+    
+    # STEP 7: MHB Business Expenses
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 7 of {state.total_steps}: MHB Business Expenses[/bold cyan]")
+    console.print("─" * 63)
+    
+    mhb_expenses = get_entity_expenses('mhb', start_date, end_date, state.active_accounts)
+    
+    if mhb_expenses:
+        console.print(f"[green]Found {len(mhb_expenses)} unallocated MHB expenses:[/green]\n")
+        console.print("[dim]Use 'copilot staging assign-todo --entity mhb' for interactive assignment[/dim]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("Account", style="white")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
+        
+        for row in mhb_expenses[:10]:  # Show first 10
+            amount_style = "green" if row['amount'] > 0 else "red"
+            table.add_row(
+                str(row['normalized_date']),
+                row['source_account_code'],
+                row['description'][:40],
+                f"[{amount_style}]${row['amount']:,.2f}[/{amount_style}]"
+            )
+        
+        if len(mhb_expenses) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(mhb_expenses) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+    else:
+        console.print("[green]✓ All MHB expenses allocated![/green]\n")
+    
+    input("Press Enter to continue...")
+    
+    # STEP 8: CSB Personal Expenses
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 8 of {state.total_steps}: CSB Personal Expenses[/bold cyan]")
+    console.print("─" * 63)
+    
+    csb_expenses = get_entity_expenses('csb', start_date, end_date, state.active_accounts)
+    
+    if csb_expenses:
+        console.print(f"[green]Found {len(csb_expenses)} unallocated CSB expenses:[/green]\n")
+        console.print("[dim]Use 'copilot staging assign-todo --entity csb' for interactive assignment[/dim]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("Account", style="white")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
+        
+        for row in csb_expenses[:10]:  # Show first 10
+            amount_style = "green" if row['amount'] > 0 else "red"
+            table.add_row(
+                str(row['normalized_date']),
+                row['source_account_code'],
+                row['description'][:40],
+                f"[{amount_style}]${row['amount']:,.2f}[/{amount_style}]"
+            )
+        
+        if len(csb_expenses) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(csb_expenses) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+    else:
+        console.print("[green]✓ All CSB expenses allocated![/green]\n")
+    
+    input("Press Enter to continue...")
+    
+    # STEP 9: Medical Payments
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 9 of {state.total_steps}: Medical Payments[/bold cyan]")
+    console.print("─" * 63)
+    
+    medical_expenses = get_entity_expenses('medical', start_date, end_date, state.active_accounts)
+    
+    if medical_expenses:
+        console.print(f"[green]Found {len(medical_expenses)} unallocated medical payments:[/green]\n")
+        console.print("[dim]Use 'copilot staging assign-todo --entity medical' for interactive assignment[/dim]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("Account", style="white")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
+        
+        for row in medical_expenses[:10]:  # Show first 10
+            amount_style = "green" if row['amount'] > 0 else "red"
+            table.add_row(
+                str(row['normalized_date']),
+                row['source_account_code'],
+                row['description'][:40],
+                f"[{amount_style}]${row['amount']:,.2f}[/{amount_style}]"
+            )
+        
+        if len(medical_expenses) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(medical_expenses) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+    else:
+        console.print("[green]✓ All medical payments allocated![/green]\n")
+    
+    input("Press Enter to continue...")
+    
+    # STEP 10: Tax Payments
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 10 of {state.total_steps}: Tax Payments[/bold cyan]")
+    console.print("─" * 63)
+    
+    tax_expenses = get_entity_expenses('tax', start_date, end_date, state.active_accounts)
+    
+    if tax_expenses:
+        console.print(f"[green]Found {len(tax_expenses)} unallocated tax payments:[/green]\n")
+        console.print("[dim]Use 'copilot staging assign-todo --entity tax' for interactive assignment[/dim]\n")
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Date", style="cyan")
+        table.add_column("Account", style="white")
+        table.add_column("Description", style="white")
+        table.add_column("Amount", justify="right")
+        
+        for row in tax_expenses[:10]:  # Show first 10
+            amount_style = "green" if row['amount'] > 0 else "red"
+            table.add_row(
+                str(row['normalized_date']),
+                row['source_account_code'],
+                row['description'][:40],
+                f"[{amount_style}]${row['amount']:,.2f}[/{amount_style}]"
+            )
+        
+        if len(tax_expenses) > 10:
+            console.print(table)
+            console.print(f"[dim]... and {len(tax_expenses) - 10} more[/dim]\n")
+        else:
+            console.print(table)
+            console.print()
+    else:
+        console.print("[green]✓ All tax payments allocated![/green]\n")
     
     input("[Enter] to view summary    [q] Quit")
+
     
     # Summary Screen
     clear_screen()
@@ -1343,10 +1738,15 @@ def allocation_wizard(entity, period):
     console.print(f"  Remaining:               {final_progress['remaining']}\n")
     
     console.print("  [bold]By category:[/bold]")
-    console.print(f"    Internal transfers:     {state.stats['related_party_loans_assigned']}")
-    console.print(f"    Loan payments:          {state.stats['loans_assigned']}")
-    console.print(f"    Recurring:              {state.stats['recurring_assigned']}")
-    console.print(f"    Manual:                 {state.stats['manual_assigned']}")
+    console.print(f"    Business-to-Business:   {state.stats['related_party_loans_assigned']}")
+    console.print(f"    Owner Draws:            {state.stats['owner_draws_assigned']}")
+    console.print(f"    Owner Contributions:    {state.stats['owner_contributions_assigned']}")
+    console.print(f"    Mortgage Payments:      {state.stats['mortgage_payments_assigned']}")
+    console.print(f"    BGS Expenses:           {state.stats['bgs_expenses_assigned']}")
+    console.print(f"    MHB Expenses:           {state.stats['mhb_expenses_assigned']}")
+    console.print(f"    CSB Expenses:           {state.stats['csb_expenses_assigned']}")
+    console.print(f"    Medical Expenses:       {state.stats['medical_expenses_assigned']}")
+    console.print(f"    Tax Expenses:           {state.stats['tax_expenses_assigned']}")
     console.print()
     console.print(f"  Patterns created:         {state.stats['patterns_created']}\n")
     
