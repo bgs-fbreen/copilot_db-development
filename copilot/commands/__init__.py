@@ -18,7 +18,8 @@ from copilot.commands.staging_cmd import staging_cmd
 from copilot.commands.trial_cmd import trial_cmd
 from copilot.commands.journal_cmd import journal_cmd
 from copilot.commands.gl_cmd import gl_cmd
+from copilot.commands.lease_cmd import lease
 
 __all__ = ['version', 'timesheet', 'new', 'edit', 'ar', 'invoice', 'client', 'project', 
            'report', 'baseline', 'export_baseline', 'create_workbook', 'add_invoice_to_workbook', 
-           'cleanup', 'import_cmd', 'allocate', 'staging_cmd', 'trial_cmd', 'journal_cmd', 'gl_cmd']
+           'cleanup', 'import_cmd', 'allocate', 'staging_cmd', 'trial_cmd', 'journal_cmd', 'gl_cmd', 'lease']
