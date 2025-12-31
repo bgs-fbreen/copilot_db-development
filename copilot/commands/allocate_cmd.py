@@ -1148,26 +1148,20 @@ def detect_mortgage_payments(entity, start_date, end_date, active_accounts=None)
     params = [start_date, end_date]
     
     # If specific entity, filter to transfers from that entity
-    entity_filter = ""
-    entity_params = []
     if entity:
-        entity_filter = " AND a.entity = %s"
-        entity_params = [entity]
+        query += " AND a.entity = %s"
+        params.append(entity)
     
-    # Filter by active accounts if provided
-    account_filter = ""
-    account_params = []
-    if active_accounts:
+    # Filter by active accounts if provided (must be non-empty list)
+    if active_accounts and len(active_accounts) > 0:
         placeholders = ','.join(['%s'] * len(active_accounts))
-        account_filter = f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
-        account_params = active_accounts + active_accounts
+        query += f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
+        params.extend(active_accounts)
+        params.extend(active_accounts)
     
-    all_params = params + entity_params + account_params
+    query += " ORDER BY a.normalized_date"
     
-    results = execute_query(
-        query + entity_filter + account_filter + " ORDER BY a.normalized_date",
-        tuple(all_params)
-    )
+    results = execute_query(query, tuple(params))
     
     return results or []
 
