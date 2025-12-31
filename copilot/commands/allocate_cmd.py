@@ -578,9 +578,13 @@ def get_skipped_accounts(entity, period):
 
 
 def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
-    """Find potential related party loans - matching amounts on same date, opposite signs.
-    If entity is None, find transfers across ALL entities.
-    Only includes transfers between BUSINESS entities (excludes personal/support)."""
+    """Find all internal transfers - matching amounts on same date, opposite signs.
+    Includes:
+    - Cross-entity transfers (business, personal, support)
+    - Same-entity transfers (different accounts within same entity)
+    - Mortgage payments (to accounts containing 'mortgage:')
+    
+    If entity is None, find transfers across ALL entities."""
     
     # Get entity types from database
     # Note: If acc.entity table doesn't exist yet (migration 012 not run),
@@ -595,7 +599,8 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
         # Migration 012 not run yet - use default behavior
         pass
     
-    base_query = """
+    # Query for cross-entity transfers (different entities)
+    cross_entity_query = """
         SELECT 
             a.id as from_id,
             a.normalized_date,
@@ -620,40 +625,73 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
           AND b.gl_account_code = 'TODO'
     """
     
+    # Query for same-entity transfers (different accounts within same entity)
+    same_entity_query = """
+        SELECT 
+            a.id as from_id,
+            a.normalized_date,
+            a.entity as from_entity,
+            a.source_account_code as from_account,
+            a.description as from_desc,
+            a.amount as from_amount,
+            b.id as to_id,
+            b.entity as to_entity,
+            b.source_account_code as to_account,
+            b.description as to_desc,
+            b.amount as to_amount
+        FROM acc.bank_staging a
+        JOIN acc.bank_staging b 
+            ON a.normalized_date = b.normalized_date
+            AND a.amount = -b.amount
+            AND a.entity = b.entity
+            AND a.source_account_code != b.source_account_code
+            AND a.id < b.id
+        WHERE a.amount < 0
+          AND a.normalized_date BETWEEN %s AND %s
+          AND a.gl_account_code = 'TODO'
+          AND b.gl_account_code = 'TODO'
+    """
+    
     params = [start_date, end_date]
     
     # If specific entity, filter to transfers involving that entity
+    entity_filter = ""
+    entity_params = []
     if entity:
-        base_query += " AND (a.entity = %s OR b.entity = %s)"
-        params.extend([entity, entity])
+        entity_filter = " AND (a.entity = %s OR b.entity = %s)"
+        entity_params = [entity, entity]
     
     # Filter by active accounts if provided
     # Note: active_accounts list comes from trusted database query results
+    account_filter = ""
+    account_params = []
     if active_accounts:
         placeholders = ','.join(['%s'] * len(active_accounts))
-        base_query += f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
-        params.extend(active_accounts)
-        params.extend(active_accounts)
+        account_filter = f" AND (a.source_account_code IN ({placeholders}) OR b.source_account_code IN ({placeholders}))"
+        account_params = active_accounts + active_accounts
     
-    base_query += " ORDER BY a.normalized_date"
+    # Execute both queries and combine results
+    cross_entity_params = params + entity_params + account_params
+    same_entity_params = params + entity_params + account_params
     
-    results = execute_query(base_query, tuple(params))
+    cross_entity_results = execute_query(
+        cross_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
+        tuple(cross_entity_params) if cross_entity_params else None
+    )
     
-    # If no entity types loaded (migration not run), return all results (backward compatible)
-    if not entity_type_map:
-        return results
+    same_entity_results = execute_query(
+        same_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
+        tuple(same_entity_params) if same_entity_params else None
+    )
     
-    # Filter results to only include transfers between business entities
-    related_party_loans = []
-    for row in results:
-        from_type = entity_type_map.get(row['from_entity'], 'business')
-        to_type = entity_type_map.get(row['to_entity'], 'business')
-        
-        # Only include if BOTH entities are 'business' type
-        if from_type == 'business' and to_type == 'business':
-            related_party_loans.append(row)
+    # Combine and return all results (no filtering by entity type - classification handles it)
+    all_results = (cross_entity_results or []) + (same_entity_results or [])
     
-    return related_party_loans
+    # Add entity_type_map to each result for use in classification
+    for row in all_results:
+        row['entity_type_map'] = entity_type_map
+    
+    return all_results
 
 
 def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
@@ -762,20 +800,89 @@ def get_allocation_progress(entity, start_date, end_date):
     return results[0] if results else {'total': 0, 'allocated': 0, 'remaining': 0}
 
 
-def assign_intercompany(from_id, to_id, from_entity, to_entity):
-    """Assign related party loan GL codes to both sides of transfer"""
-    # Determine loan code based on entity direction (from perspective)
-    loan_code = f"loan:{from_entity}-to-{to_entity}"
+def classify_transfer(from_entity, to_entity, from_account, to_account, entity_type_map):
+    """
+    Classify a transfer and return the appropriate GL code.
+    
+    Detection Priority:
+    1. Mortgage account destination → mortgage:{property}
+    2. Business → Business → loan:{from}-to-{to}
+    3. Business → Personal/Support → draw:fbreen
+    4. Personal/Support → Business → contrib:fbreen
+    5. Same Entity (non-mortgage) → transfer:{entity}
+    
+    Args:
+        from_entity: Source entity code
+        to_entity: Destination entity code
+        from_account: Source account code
+        to_account: Destination account code
+        entity_type_map: Dictionary mapping entity codes to entity types
+    
+    Returns:
+        GL code string (e.g., 'mortgage:711pine', 'loan:bgs-to-mhb', 'draw:fbreen')
+    """
+    # Priority 1: Mortgage account destination
+    # Check if destination account contains "mortgage:"
+    if 'mortgage:' in to_account.lower():
+        # Extract property name from account code
+        # Format: entity:mortgage:property or per:mortgage:property
+        parts = to_account.split(':')
+        if len(parts) >= 3 and parts[1].lower() == 'mortgage':
+            property_name = parts[2]
+            return f"mortgage:{property_name}"
+    
+    # Priority 5: Same entity transfer (non-mortgage)
+    if from_entity == to_entity:
+        return f"transfer:{from_entity}"
+    
+    # Get entity types (default to 'business' if not found for backward compatibility)
+    from_type = entity_type_map.get(from_entity, 'business')
+    to_type = entity_type_map.get(to_entity, 'business')
+    
+    # Priority 2: Business → Business (related party loan)
+    if from_type == 'business' and to_type == 'business':
+        return f"loan:{from_entity}-to-{to_entity}"
+    
+    # Priority 3: Business → Personal/Support (owner draw)
+    if from_type == 'business' and to_type in ('personal', 'support'):
+        return "draw:fbreen"
+    
+    # Priority 4: Personal/Support → Business (owner contribution)
+    if from_type in ('personal', 'support') and to_type == 'business':
+        return "contrib:fbreen"
+    
+    # Fallback: treat as loan (should not happen with proper entity types)
+    return f"loan:{from_entity}-to-{to_entity}"
+
+
+def assign_intercompany(from_id, to_id, from_entity, to_entity, from_account, to_account, entity_type_map):
+    """Assign transfer GL codes to both sides of transfer based on classification"""
+    # Classify the transfer to get the appropriate GL code
+    gl_code = classify_transfer(from_entity, to_entity, from_account, to_account, entity_type_map)
+    
+    # Determine match_method based on GL code type
+    if gl_code.startswith('mortgage:'):
+        match_method = 'mortgage'
+    elif gl_code.startswith('loan:'):
+        match_method = 'loan'
+    elif gl_code.startswith('draw:'):
+        match_method = 'draw'
+    elif gl_code.startswith('contrib:'):
+        match_method = 'contribution'
+    elif gl_code.startswith('transfer:'):
+        match_method = 'transfer'
+    else:
+        match_method = 'transfer'
     
     # Update both transactions
     update_query = """
         UPDATE acc.bank_staging
         SET gl_account_code = %s,
-            match_method = 'loan',
+            match_method = %s,
             updated_at = CURRENT_TIMESTAMP
         WHERE id IN (%s, %s)
     """
-    execute_command(update_query, (loan_code, from_id, to_id))
+    execute_command(update_query, (gl_code, match_method, from_id, to_id))
 
 
 def display_progress_bar(allocated, total, width=20):
@@ -965,13 +1072,13 @@ def allocation_wizard(entity, period):
     
     # STEP 2: Related Party Loan Detection
     clear_screen()
-    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Related Party Loan Detection[/bold cyan]")
+    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Internal Transfer Detection[/bold cyan]")
     console.print("─" * 63)
     
     intercompany = detect_intercompany_transfers(entity, start_date, end_date, state.active_accounts)
     
     if intercompany:
-        console.print(f"[green]Found {len(intercompany)} potential related party loans:[/green]\n")
+        console.print(f"[green]Found {len(intercompany)} internal transfers:[/green]\n")
         
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Date", style="cyan")
@@ -997,22 +1104,30 @@ def allocation_wizard(entity, period):
             console.print()
         
         action = Prompt.ask(
-            "[a] Auto-assign as loans    [r] Review one-by-one    [s] Skip",
+            "[a] Auto-assign transfers    [r] Review one-by-one    [s] Skip",
             choices=['a', 'r', 's'],
             default='a'
         )
         
         if action == 'a':
             for row in intercompany:
-                assign_intercompany(row['from_id'], row['to_id'], row['from_entity'], row['to_entity'])
+                assign_intercompany(
+                    row['from_id'], 
+                    row['to_id'], 
+                    row['from_entity'], 
+                    row['to_entity'],
+                    row['from_account'],
+                    row['to_account'],
+                    row['entity_type_map']
+                )
                 state.stats['related_party_loans_assigned'] += 2
-            console.print(f"\n[green]✓ Assigned {len(intercompany)} related party loans ({state.stats['related_party_loans_assigned']} transactions)[/green]")
+            console.print(f"\n[green]✓ Assigned {len(intercompany)} internal transfers ({state.stats['related_party_loans_assigned']} transactions)[/green]")
             input("\nPress Enter to continue...")
         elif action == 'r':
             console.print("\n[yellow]Review mode not implemented yet. Use auto-assign or skip.[/yellow]")
             input("\nPress Enter to continue...")
     else:
-        console.print("[dim]No related party loans detected[/dim]\n")
+        console.print("[dim]No internal transfers detected[/dim]\n")
         input("Press Enter to continue...")
     
     # STEP 3: Loan/Mortgage Payments
@@ -1227,7 +1342,7 @@ def allocation_wizard(entity, period):
     console.print(f"  Remaining:               {final_progress['remaining']}\n")
     
     console.print("  [bold]By category:[/bold]")
-    console.print(f"    Related party loans:    {state.stats['related_party_loans_assigned']}")
+    console.print(f"    Internal transfers:     {state.stats['related_party_loans_assigned']}")
     console.print(f"    Loan payments:          {state.stats['loans_assigned']}")
     console.print(f"    Recurring:              {state.stats['recurring_assigned']}")
     console.print(f"    Manual:                 {state.stats['manual_assigned']}")
