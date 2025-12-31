@@ -1929,3 +1929,169 @@ def allocation_wizard(entity, period):
     console.print(f"  Patterns created:         {state.stats['patterns_created']}\n")
     
     console.print("[dim]Use 'copilot report' to generate reports or 'copilot staging' for more details[/dim]\n")
+
+
+@allocate.command('apply-patterns')
+@click.option('--dry-run', is_flag=True, help='Preview matches without updating')
+@click.option('--entity', '-e', help='Filter by entity (e.g., bgs, mhb)')
+@click.option('--from', 'from_date', help='Filter by date range start (YYYY-MM-DD)')
+@click.option('--to', 'to_date', help='Filter by date range end (YYYY-MM-DD)')
+def apply_patterns(dry_run, entity, from_date, to_date):
+    """Apply vendor GL patterns to TODO transactions"""
+    
+    if dry_run:
+        console.print("\n[bold cyan]Dry Run - Pattern Matching Preview[/bold cyan]")
+        console.print("─" * 38)
+        console.print()
+    else:
+        console.print("\n[bold cyan]Applying Patterns to TODO Transactions[/bold cyan]")
+        console.print("─" * 38)
+        console.print()
+    
+    # Build WHERE clause for filtering
+    where_clauses = ["bs.gl_account_code = 'TODO'"]
+    params = []
+    
+    if entity:
+        where_clauses.append("bs.entity = %s")
+        params.append(entity)
+    
+    if from_date:
+        where_clauses.append("bs.normalized_date >= %s")
+        params.append(from_date)
+    
+    if to_date:
+        where_clauses.append("bs.normalized_date <= %s")
+        params.append(to_date)
+    
+    where_clause = " AND ".join(where_clauses)
+    
+    # Get all active patterns
+    pattern_query = """
+        SELECT id, pattern, pattern_type, gl_account_code, entity
+        FROM acc.vendor_gl_patterns
+        WHERE is_active = true
+        ORDER BY priority DESC, id
+    """
+    patterns = execute_query(pattern_query)
+    
+    if not patterns:
+        console.print("[yellow]No active patterns found[/yellow]\n")
+        return
+    
+    # For each pattern, find matching transactions
+    total_matched = 0
+    pattern_matches = []
+    
+    for pattern in patterns:
+        # Build the ILIKE condition based on pattern_type
+        if pattern['pattern_type'] == 'contains' or pattern['pattern_type'] is None:
+            like_condition = "bs.description ILIKE %s"
+            like_param = f"%{pattern['pattern']}%"
+        elif pattern['pattern_type'] == 'startswith':
+            like_condition = "bs.description ILIKE %s"
+            like_param = f"{pattern['pattern']}%"
+        elif pattern['pattern_type'] == 'exact':
+            like_condition = "bs.description ILIKE %s"
+            like_param = pattern['pattern']
+        else:
+            # Default to contains for unknown types
+            like_condition = "bs.description ILIKE %s"
+            like_param = f"%{pattern['pattern']}%"
+        
+        # Query to find matching transactions
+        match_query = f"""
+            SELECT 
+                bs.id,
+                bs.description,
+                bs.amount,
+                bs.normalized_date
+            FROM acc.bank_staging bs
+            WHERE {where_clause}
+              AND bs.entity = %s
+              AND {like_condition}
+            ORDER BY bs.normalized_date DESC
+        """
+        
+        # Combine parameters: where_clause params + entity + like_param
+        query_params = params + [pattern['entity'], like_param]
+        
+        matches = execute_query(match_query, tuple(query_params))
+        
+        if matches:
+            pattern_matches.append({
+                'pattern': pattern,
+                'matches': matches
+            })
+            total_matched += len(matches)
+    
+    if total_matched == 0:
+        console.print("[yellow]No TODO transactions match active patterns[/yellow]\n")
+        return
+    
+    # Display results based on mode
+    if dry_run:
+        # Dry run: show preview grouped by pattern
+        for pm in pattern_matches:
+            pattern = pm['pattern']
+            matches = pm['matches']
+            
+            pattern_type = pattern['pattern_type'] or 'contains'
+            console.print(f"[bold]Pattern:[/bold] {pattern['pattern']} ({pattern_type}) → [cyan]{pattern['gl_account_code']}[/cyan]")
+            
+            for match in matches:
+                amount_str = f"${match['amount']:,.2f}" if match['amount'] >= 0 else f"-${abs(match['amount']):,.2f}"
+                console.print(f"  • {match['description'][:40]:<40} {amount_str:>12}")
+            
+            console.print()
+        
+        console.print("─" * 38)
+        console.print(f"[bold]Total:[/bold] {total_matched} transactions would be updated")
+        console.print()
+        console.print("[dim]Run without --dry-run to apply changes.[/dim]\n")
+    
+    else:
+        # Apply mode: update transactions
+        updated_count = 0
+        
+        for pm in pattern_matches:
+            pattern = pm['pattern']
+            matches = pm['matches']
+            
+            if matches:
+                # Update all matching transactions for this pattern
+                transaction_ids = [m['id'] for m in matches]
+                
+                # Build UPDATE query with IN clause
+                placeholders = ','.join(['%s'] * len(transaction_ids))
+                update_query = f"""
+                    UPDATE acc.bank_staging
+                    SET gl_account_code = %s,
+                        match_method = 'pattern',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id IN ({placeholders})
+                """
+                
+                update_params = [pattern['gl_account_code']] + transaction_ids
+                execute_command(update_query, tuple(update_params))
+                
+                pattern_type = pattern['pattern_type'] or 'contains'
+                console.print(f"[bold]Pattern:[/bold] {pattern['pattern']} ({pattern_type}) → [cyan]{pattern['gl_account_code']}[/cyan]")
+                console.print(f"  [green]✓[/green] {len(matches)} transactions updated")
+                console.print()
+                
+                updated_count += len(matches)
+        
+        # Get remaining TODO count
+        remaining_query = f"""
+            SELECT COUNT(*) as count
+            FROM acc.bank_staging bs
+            WHERE {where_clause}
+        """
+        remaining_result = execute_query(remaining_query, tuple(params))
+        remaining_count = remaining_result[0]['count'] if remaining_result else 0
+        
+        console.print("─" * 38)
+        console.print(f"[bold]Total:[/bold] {updated_count} transactions updated")
+        console.print(f"[bold]Remaining TODOs:[/bold] {remaining_count}")
+        console.print()
