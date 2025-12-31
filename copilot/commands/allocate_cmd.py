@@ -676,12 +676,12 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     
     cross_entity_results = execute_query(
         cross_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
-        tuple(cross_entity_params) if cross_entity_params else None
+        tuple(cross_entity_params)
     )
     
     same_entity_results = execute_query(
         same_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
-        tuple(same_entity_params) if same_entity_params else None
+        tuple(same_entity_params)
     )
     
     # Combine and return all results (no filtering by entity type - classification handles it)
@@ -823,11 +823,13 @@ def classify_transfer(from_entity, to_entity, from_account, to_account, entity_t
     """
     # Priority 1: Mortgage account destination
     # Check if destination account contains "mortgage:"
+    # Expected format: entity:mortgage:property (e.g., mhb:mortgage:711pine)
     if 'mortgage:' in to_account.lower():
         # Extract property name from account code
-        # Format: entity:mortgage:property or per:mortgage:property
         parts = to_account.split(':')
+        # Ensure we have at least 3 parts: entity, mortgage, property
         if len(parts) >= 3 and parts[1].lower() == 'mortgage':
+            # Take the third part as property name (ignoring any additional parts)
             property_name = parts[2]
             return f"mortgage:{property_name}"
     
