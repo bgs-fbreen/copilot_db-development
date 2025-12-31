@@ -671,27 +671,24 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
         account_params = active_accounts + active_accounts
     
     # Execute both queries and combine results
-    cross_entity_params = params + entity_params + account_params
-    same_entity_params = params + entity_params + account_params
+    all_params = params + entity_params + account_params
     
     cross_entity_results = execute_query(
         cross_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
-        tuple(cross_entity_params)
+        tuple(all_params)
     )
     
     same_entity_results = execute_query(
         same_entity_query + entity_filter + account_filter + " ORDER BY a.normalized_date",
-        tuple(same_entity_params)
+        tuple(all_params)
     )
     
     # Combine and return all results (no filtering by entity type - classification handles it)
     all_results = (cross_entity_results or []) + (same_entity_results or [])
     
-    # Add entity_type_map to each result for use in classification
-    for row in all_results:
-        row['entity_type_map'] = entity_type_map
-    
-    return all_results
+    # Store entity_type_map separately to avoid duplicating in every row
+    # The caller will have access to entity_type_map already
+    return all_results, entity_type_map
 
 
 def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
@@ -1077,7 +1074,7 @@ def allocation_wizard(entity, period):
     console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Internal Transfer Detection[/bold cyan]")
     console.print("─" * 63)
     
-    intercompany = detect_intercompany_transfers(entity, start_date, end_date, state.active_accounts)
+    intercompany, entity_type_map = detect_intercompany_transfers(entity, start_date, end_date, state.active_accounts)
     
     if intercompany:
         console.print(f"[green]Found {len(intercompany)} internal transfers:[/green]\n")
@@ -1120,7 +1117,7 @@ def allocation_wizard(entity, period):
                     row['to_entity'],
                     row['from_account'],
                     row['to_account'],
-                    row['entity_type_map']
+                    entity_type_map
                 )
                 state.stats['related_party_loans_assigned'] += 2
             console.print(f"\n[green]✓ Assigned {len(intercompany)} internal transfers ({state.stats['related_party_loans_assigned']} transactions)[/green]")
