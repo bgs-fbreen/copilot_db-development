@@ -621,7 +621,8 @@ def assign_todo(entity):
         console.print(f"\n[bold]Found {count} transaction(s) with description \"{description}\"[/bold]")
         confirmation = console.input(f"[bold yellow]Apply '{gl_code}' to all {count} transactions? [Y/n]: [/bold yellow]").strip().lower()
         
-        if confirmation and confirmation not in ('y', 'yes'):
+        # Default is Yes (empty or 'y' or 'yes'), only skip if user explicitly says 'n' or 'no'
+        if confirmation in ('n', 'no'):
             console.print("[dim]Skipped - no changes made[/dim]")
             console.input("\nPress Enter to continue...")
             continue
