@@ -36,14 +36,37 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- Step 1: Update existing records to replace spaces with underscores
+-- Step 1: Check for potential conflicts and update records
 -- ============================================================================
 
 DO $$
 DECLARE
-    updated_count INTEGER;
+    updated_count INTEGER := 0;
+    conflict_count INTEGER := 0;
+    v_old_code VARCHAR(100);
+    v_new_code VARCHAR(100);
+    v_conflict_exists BOOLEAN;
 BEGIN
-    -- Update gl_account_code values that contain spaces
+    -- First, check for potential conflicts
+    SELECT COUNT(*) INTO conflict_count
+    FROM (
+        SELECT REPLACE(gl_account_code, ' ', '_') as new_code
+        FROM acc.gl_accounts
+        WHERE gl_account_code LIKE '% %'
+    ) space_codes
+    WHERE EXISTS (
+        SELECT 1 FROM acc.gl_accounts 
+        WHERE gl_account_code = space_codes.new_code
+    );
+    
+    IF conflict_count > 0 THEN
+        RAISE WARNING 'Found % potential conflicts where replaced code already exists', conflict_count;
+        RAISE WARNING 'These conflicts must be resolved manually before running this migration';
+        RAISE WARNING 'Run this query to see conflicts: SELECT gl_account_code, REPLACE(gl_account_code, '' '', ''_'') as new_code FROM acc.gl_accounts WHERE gl_account_code LIKE ''%% %%'' AND EXISTS (SELECT 1 FROM acc.gl_accounts g2 WHERE g2.gl_account_code = REPLACE(gl_account_code, '' '', ''_''))';
+        RAISE EXCEPTION 'Cannot proceed with migration due to potential primary key conflicts';
+    END IF;
+    
+    -- If no conflicts, proceed with update
     UPDATE acc.gl_accounts
     SET gl_account_code = REPLACE(gl_account_code, ' ', '_'),
         updated_at = CURRENT_TIMESTAMP
