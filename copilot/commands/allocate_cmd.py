@@ -578,7 +578,7 @@ def get_skipped_accounts(entity, period):
 
 
 def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
-    """Find potential intercompany transfers - matching amounts on same date, opposite signs.
+    """Find potential related party loans - matching amounts on same date, opposite signs.
     If entity is None, find transfers across ALL entities.
     Only includes transfers between BUSINESS entities (excludes personal/support)."""
     
@@ -644,16 +644,16 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
         return results
     
     # Filter results to only include transfers between business entities
-    intercompany_transfers = []
+    related_party_loans = []
     for row in results:
         from_type = entity_type_map.get(row['from_entity'], 'business')
         to_type = entity_type_map.get(row['to_entity'], 'business')
         
         # Only include if BOTH entities are 'business' type
         if from_type == 'business' and to_type == 'business':
-            intercompany_transfers.append(row)
+            related_party_loans.append(row)
     
-    return intercompany_transfers
+    return related_party_loans
 
 
 def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
@@ -763,20 +763,19 @@ def get_allocation_progress(entity, start_date, end_date):
 
 
 def assign_intercompany(from_id, to_id, from_entity, to_entity):
-    """Assign intercompany GL codes to both sides of transfer"""
-    # Determine intercompany code based on entity pair
-    entities = sorted([from_entity, to_entity])
-    ic_code = f"ic:{entities[0]}-{entities[1]}"
+    """Assign related party loan GL codes to both sides of transfer"""
+    # Determine loan code based on entity direction (from perspective)
+    loan_code = f"loan:{from_entity}-to-{to_entity}"
     
     # Update both transactions
     update_query = """
         UPDATE acc.bank_staging
         SET gl_account_code = %s,
-            match_method = 'intercompany',
+            match_method = 'loan',
             updated_at = CURRENT_TIMESTAMP
         WHERE id IN (%s, %s)
     """
-    execute_command(update_query, (ic_code, from_id, to_id))
+    execute_command(update_query, (loan_code, from_id, to_id))
 
 
 def display_progress_bar(allocated, total, width=20):
@@ -801,7 +800,7 @@ class WizardState:
         self.active_accounts = []  # List of non-skipped accounts
         self.active_entities = []  # List of entities with active accounts
         self.stats = {
-            'intercompany_assigned': 0,
+            'related_party_loans_assigned': 0,
             'loans_assigned': 0,
             'recurring_assigned': 0,
             'manual_assigned': 0,
@@ -964,15 +963,15 @@ def allocation_wizard(entity, period):
                 console.print("[red]Invalid format. Use 'u 3'[/red]")
                 input("\nPress Enter to continue...")
     
-    # STEP 2: Intercompany Detection
+    # STEP 2: Related Party Loan Detection
     clear_screen()
-    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Intercompany Detection[/bold cyan]")
+    console.print(f"\n[bold cyan]STEP 2 of {state.total_steps}: Related Party Loan Detection[/bold cyan]")
     console.print("─" * 63)
     
     intercompany = detect_intercompany_transfers(entity, start_date, end_date, state.active_accounts)
     
     if intercompany:
-        console.print(f"[green]Found {len(intercompany)} potential intercompany transfers:[/green]\n")
+        console.print(f"[green]Found {len(intercompany)} potential related party loans:[/green]\n")
         
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Date", style="cyan")
@@ -998,7 +997,7 @@ def allocation_wizard(entity, period):
             console.print()
         
         action = Prompt.ask(
-            "[a] Auto-assign intercompany    [r] Review one-by-one    [s] Skip",
+            "[a] Auto-assign as loans    [r] Review one-by-one    [s] Skip",
             choices=['a', 'r', 's'],
             default='a'
         )
@@ -1006,14 +1005,14 @@ def allocation_wizard(entity, period):
         if action == 'a':
             for row in intercompany:
                 assign_intercompany(row['from_id'], row['to_id'], row['from_entity'], row['to_entity'])
-                state.stats['intercompany_assigned'] += 2
-            console.print(f"\n[green]✓ Assigned {len(intercompany)} intercompany transfers ({state.stats['intercompany_assigned']} transactions)[/green]")
+                state.stats['related_party_loans_assigned'] += 2
+            console.print(f"\n[green]✓ Assigned {len(intercompany)} related party loans ({state.stats['related_party_loans_assigned']} transactions)[/green]")
             input("\nPress Enter to continue...")
         elif action == 'r':
             console.print("\n[yellow]Review mode not implemented yet. Use auto-assign or skip.[/yellow]")
             input("\nPress Enter to continue...")
     else:
-        console.print("[dim]No intercompany transfers detected[/dim]\n")
+        console.print("[dim]No related party loans detected[/dim]\n")
         input("Press Enter to continue...")
     
     # STEP 3: Loan/Mortgage Payments
@@ -1228,7 +1227,7 @@ def allocation_wizard(entity, period):
     console.print(f"  Remaining:               {final_progress['remaining']}\n")
     
     console.print("  [bold]By category:[/bold]")
-    console.print(f"    Intercompany:           {state.stats['intercompany_assigned']}")
+    console.print(f"    Related party loans:    {state.stats['related_party_loans_assigned']}")
     console.print(f"    Loan payments:          {state.stats['loans_assigned']}")
     console.print(f"    Recurring:              {state.stats['recurring_assigned']}")
     console.print(f"    Manual:                 {state.stats['manual_assigned']}")
