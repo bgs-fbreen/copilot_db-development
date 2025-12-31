@@ -821,10 +821,12 @@ def classify_transfer(from_entity, to_entity, from_account, to_account, entity_t
     # Priority 1: Mortgage account destination
     # Check if destination account contains "mortgage:"
     # Expected format: entity:mortgage:property (e.g., mhb:mortgage:711pine)
-    if 'mortgage:' in to_account.lower():
+    to_account_lower = to_account.lower()
+    if 'mortgage:' in to_account_lower:
         # Extract property name from account code
         parts = to_account.split(':')
         # Ensure we have at least 3 parts: entity, mortgage, property
+        # Use lowercased version for comparison to ensure case-insensitive matching
         if len(parts) >= 3 and parts[1].lower() == 'mortgage':
             # Take the third part as property name (ignoring any additional parts)
             property_name = parts[2]
