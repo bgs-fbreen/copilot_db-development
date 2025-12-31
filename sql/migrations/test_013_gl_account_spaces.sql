@@ -3,9 +3,14 @@
 -- Tests the migration and constraint functionality
 -- ============================================================================
 
+-- NOTE: This is a standalone test script that creates its own test environment.
+-- It duplicates the table definition for testing purposes in isolation.
+-- For production use, apply sql/schema/01_core.sql first, then the migration.
+
 -- This script can be run against a test database to verify the migration works
 
 -- Test 1: Create table with some test data containing spaces
+-- (Table definition duplicated here for standalone testing)
 CREATE TABLE IF NOT EXISTS acc.gl_accounts (
     gl_account_code VARCHAR(100) PRIMARY KEY,
     description VARCHAR(500) NOT NULL,

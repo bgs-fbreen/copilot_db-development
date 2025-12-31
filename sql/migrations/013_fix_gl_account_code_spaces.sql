@@ -62,7 +62,12 @@ BEGIN
     IF conflict_count > 0 THEN
         RAISE WARNING 'Found % potential conflicts where replaced code already exists', conflict_count;
         RAISE WARNING 'These conflicts must be resolved manually before running this migration';
-        RAISE WARNING 'Run this query to see conflicts: SELECT gl_account_code, REPLACE(gl_account_code, '' '', ''_'') as new_code FROM acc.gl_accounts WHERE gl_account_code LIKE ''%% %%'' AND EXISTS (SELECT 1 FROM acc.gl_accounts g2 WHERE g2.gl_account_code = REPLACE(gl_account_code, '' '', ''_''))';
+        RAISE WARNING 'To identify conflicts, run:';
+        RAISE WARNING '  SELECT gl_account_code, REPLACE(gl_account_code, '' '', ''_'') as new_code';
+        RAISE WARNING '  FROM acc.gl_accounts';
+        RAISE WARNING '  WHERE gl_account_code LIKE ''%% %%''';
+        RAISE WARNING '    AND EXISTS (SELECT 1 FROM acc.gl_accounts g2';
+        RAISE WARNING '                WHERE g2.gl_account_code = REPLACE(gl_account_code, '' '', ''_''))';
         RAISE EXCEPTION 'Cannot proceed with migration due to potential primary key conflicts';
     END IF;
     
