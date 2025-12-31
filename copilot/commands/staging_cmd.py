@@ -40,7 +40,7 @@ def get_existing_patterns(description, entity):
     query = """
         SELECT pattern, gl_account_code, notes
         FROM acc.vendor_gl_patterns
-        WHERE %s ILIKE '%' || pattern || '%'
+        WHERE %s ILIKE '%%' || pattern || '%%'
           AND entity = %s
           AND is_active = true
         ORDER BY priority DESC
