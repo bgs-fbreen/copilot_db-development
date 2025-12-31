@@ -56,13 +56,16 @@ CREATE INDEX idx_staging_source_institution ON acc.bank_staging(source_instituti
 CREATE TABLE IF NOT EXISTS acc.vendor_gl_patterns (
     id SERIAL PRIMARY KEY,
     pattern TEXT NOT NULL,
+    pattern_type TEXT,
     gl_account_code VARCHAR(100) NOT NULL,
-    entity VARCHAR(50) NOT NULL,
     priority INTEGER DEFAULT 100,
-    active BOOLEAN DEFAULT true,
+    entity VARCHAR(50) NOT NULL,
+    category_hint TEXT,
     notes TEXT,
+    is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_matched_at TIMESTAMP,
+    match_count INTEGER DEFAULT 0
 );
 
 COMMENT ON TABLE acc.vendor_gl_patterns IS 'Patterns for automatic GL code assignment based on transaction description';
@@ -74,7 +77,7 @@ COMMENT ON COLUMN acc.vendor_gl_patterns.priority IS 'Higher priority patterns a
 CREATE INDEX idx_vendor_pattern ON acc.vendor_gl_patterns(pattern);
 CREATE INDEX idx_vendor_entity ON acc.vendor_gl_patterns(entity);
 CREATE INDEX idx_vendor_priority ON acc.vendor_gl_patterns(priority DESC);
-CREATE INDEX idx_vendor_active ON acc.vendor_gl_patterns(active);
+CREATE INDEX idx_vendor_active ON acc.vendor_gl_patterns(is_active);
 
 -- ============================================================================
 -- PATTERN SUGGESTIONS TABLE
@@ -124,7 +127,7 @@ BEGIN
         matched_confidence
     FROM acc.vendor_gl_patterns vp
     WHERE vp.entity = NEW.entity
-      AND vp.active = true
+      AND vp.is_active = true
       AND NEW.description ILIKE '%' || vp.pattern || '%'
     ORDER BY vp.priority DESC, vp.id
     LIMIT 1;
