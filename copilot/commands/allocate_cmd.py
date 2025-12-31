@@ -1142,7 +1142,7 @@ def detect_mortgage_payments(entity, start_date, end_date, active_accounts=None)
           AND a.normalized_date BETWEEN %s AND %s
           AND a.gl_account_code = 'TODO'
           AND b.gl_account_code = 'TODO'
-          AND LOWER(b.source_account_code) LIKE '%mortgage:%'
+          AND LOWER(b.source_account_code) LIKE '%%mortgage:%%'
     """
     
     params = [start_date, end_date]
