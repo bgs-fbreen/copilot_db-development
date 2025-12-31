@@ -2010,9 +2010,9 @@ def apply_patterns(dry_run, entity, from_date, to_date):
     """
     pattern_params = []
     
-    # If entity filter is specified, only get patterns for that entity
+    # If entity filter is specified, get patterns for that entity AND wildcard patterns (entity IS NULL)
     if entity:
-        pattern_query += " AND entity = %s"
+        pattern_query += " AND (entity IS NULL OR entity = %s)"
         pattern_params.append(entity)
     
     pattern_query += " ORDER BY priority DESC, id"
