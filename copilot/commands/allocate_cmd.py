@@ -3,6 +3,7 @@ Transaction allocation command - Categorize transactions
 """
 import click
 import os
+import re
 import calendar
 from datetime import date
 from rich.console import Console
@@ -45,6 +46,95 @@ def find_matching_payee_alias(payee):
     """, (payee,))
     
     return result[0] if result else None
+
+
+def lookup_account_by_number(account_number):
+    """
+    Lookup bank account by account_number field.
+    
+    Args:
+        account_number: Account number string to search for
+        
+    Returns:
+        Dictionary with 'entity', 'code', and 'type' fields, or None if not found
+    """
+    result = execute_query("""
+        SELECT 
+            entity,
+            code,
+            account_type as type
+        FROM acc.bank_account
+        WHERE account_number = %s
+        LIMIT 1
+    """, (account_number,))
+    
+    return result[0] if result else None
+
+
+def detect_transfer_gl_code(description, source_entity):
+    """
+    Parse account number from description, lookup target entity,
+    and return appropriate GL code.
+    
+    Args:
+        description: Transaction description string
+        source_entity: Entity code where the transaction originated
+        
+    Returns:
+        GL code string or None if transfer cannot be detected
+    """
+    # 1. Detect direction
+    desc_upper = description.upper()
+    if 'TRANSFER TO' in desc_upper or 'TRF TO' in desc_upper:
+        direction = 'outgoing'
+    elif 'TRANSFER FR' in desc_upper or 'TRF FR' in desc_upper:
+        direction = 'incoming'
+    else:
+        return None
+    
+    # 2. Extract account number
+    # Try mortgage pattern first
+    mortgage_match = re.search(r'LOAN ACCT\s*0*(\d+)\s*NOTE NO\s*0*(\d+)', desc_upper)
+    if mortgage_match:
+        account_num = f"{mortgage_match.group(1)}-{mortgage_match.group(2)}"
+    else:
+        # Try checking account pattern
+        checking_match = re.search(r'ACC\s*0*(\d+)', desc_upper)
+        if checking_match:
+            account_num = checking_match.group(1)
+        else:
+            return None
+    
+    # 3. Lookup account in database
+    target_account = lookup_account_by_number(account_num)
+    if not target_account:
+        return None
+    
+    target_entity = target_account['entity']
+    target_code = target_account['code']
+    
+    # 4. Determine GL code based on entities and direction
+    if 'mortgage' in target_code.lower():
+        # Extract property name from code (e.g., mhb:mortgage:711pine -> 711pine)
+        property_name = target_code.split(':')[-1]
+        return f"mortgage:{property_name}"
+    
+    if direction == 'outgoing':
+        if source_entity in BUSINESS_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return f"loan:{source_entity}-to-{target_entity}"
+        elif source_entity in BUSINESS_ACCOUNTS and target_entity in PERSONAL_ACCOUNTS:
+            return "draw:fbreen"
+        elif source_entity in PERSONAL_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return "contrib:fbreen"
+    else:  # incoming
+        if source_entity in BUSINESS_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return f"loan:{target_entity}-to-{source_entity}"
+        elif source_entity in PERSONAL_ACCOUNTS and target_entity in BUSINESS_ACCOUNTS:
+            return "draw:fbreen"
+        elif source_entity in BUSINESS_ACCOUNTS and target_entity in PERSONAL_ACCOUNTS:
+            return "contrib:fbreen"
+    
+    return None
 
 
 @click.group()
@@ -1113,6 +1203,73 @@ def get_entity_expenses(entity_code, start_date, end_date, active_accounts=None)
     return execute_query(query, tuple(params))
 
 
+def detect_and_assign_single_transfers(entity, start_date, end_date, active_accounts=None):
+    """
+    Detect and auto-assign single-sided transfers using smart transfer detection.
+    Returns count of transactions assigned.
+    
+    This catches transfers where only one side is visible (no matching opposite transaction).
+    """
+    # Get all TODO transactions for the entity
+    query = """
+        SELECT 
+            id,
+            entity,
+            description
+        FROM acc.bank_staging
+        WHERE normalized_date BETWEEN %s AND %s
+          AND gl_account_code = 'TODO'
+    """
+    
+    params = [start_date, end_date]
+    
+    if entity:
+        query += " AND entity = %s"
+        params.append(entity)
+    
+    # Filter by active accounts if provided
+    if active_accounts:
+        placeholders = ','.join(['%s'] * len(active_accounts))
+        query += f" AND source_account_code IN ({placeholders})"
+        params.extend(active_accounts)
+    
+    transactions = execute_query(query, tuple(params))
+    
+    if not transactions:
+        return 0
+    
+    # Try to detect and assign transfers
+    assigned_count = 0
+    
+    for trans in transactions:
+        gl_code = detect_transfer_gl_code(trans['description'], trans['entity'])
+        if gl_code:
+            # Determine match_method based on GL code
+            if gl_code.startswith('mortgage:'):
+                match_method = 'mortgage'
+            elif gl_code.startswith('loan:'):
+                match_method = 'loan'
+            elif gl_code.startswith('draw:'):
+                match_method = 'draw'
+            elif gl_code.startswith('contrib:'):
+                match_method = 'contribution'
+            else:
+                match_method = 'transfer'
+            
+            # Update the transaction
+            update_query = """
+                UPDATE acc.bank_staging
+                SET gl_account_code = %s,
+                    match_method = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            execute_command(update_query, (gl_code, match_method, trans['id']))
+            assigned_count += 1
+    
+    return assigned_count
+
+
 def display_progress_bar(allocated, total, width=20):
     """Display ASCII progress bar"""
     if total == 0:
@@ -1131,7 +1288,7 @@ class WizardState:
         self.start_date = start_date
         self.end_date = end_date
         self.current_step = 1
-        self.total_steps = 10
+        self.total_steps = 11  # Updated to include Step 5.5
         self.active_accounts = []  # List of non-skipped accounts
         self.active_entities = []  # List of entities with active accounts
         self.stats = {
@@ -1139,6 +1296,7 @@ class WizardState:
             'owner_draws_assigned': 0,
             'owner_contributions_assigned': 0,
             'mortgage_payments_assigned': 0,
+            'smart_transfers_assigned': 0,  # New: single-sided transfers detected
             'bgs_expenses_assigned': 0,
             'mhb_expenses_assigned': 0,
             'csb_expenses_assigned': 0,
@@ -1546,6 +1704,22 @@ def allocation_wizard(entity, period):
         console.print("[dim]No mortgage payments detected[/dim]\n")
         input("Press Enter to continue...")
     
+    # STEP 5.5: Auto-detect Single-Sided Transfers
+    clear_screen()
+    console.print(f"\n[bold cyan]STEP 5.5 of {state.total_steps}: Smart Transfer Detection[/bold cyan]")
+    console.print("─" * 63)
+    console.print("[dim]Scanning for unmatched transfers with account numbers in description...[/dim]\n")
+    
+    single_transfer_count = detect_and_assign_single_transfers(entity, start_date, end_date, state.active_accounts)
+    
+    if single_transfer_count > 0:
+        console.print(f"[green]✓ Auto-assigned {single_transfer_count} single-sided transfers using smart detection![/green]\n")
+        state.stats['smart_transfers_assigned'] += single_transfer_count
+    else:
+        console.print("[dim]No additional single-sided transfers detected[/dim]\n")
+    
+    input("Press Enter to continue...")
+    
     # STEP 6: BGS Business Expenses
     clear_screen()
     console.print(f"\n[bold cyan]STEP 6 of {state.total_steps}: BGS Business Expenses[/bold cyan]")
@@ -1751,6 +1925,7 @@ def allocation_wizard(entity, period):
     console.print(f"    Owner Draws:            {state.stats['owner_draws_assigned']}")
     console.print(f"    Owner Contributions:    {state.stats['owner_contributions_assigned']}")
     console.print(f"    Mortgage Payments:      {state.stats['mortgage_payments_assigned']}")
+    console.print(f"    Smart Transfers:        {state.stats['smart_transfers_assigned']}")
     console.print(f"    BGS Expenses:           {state.stats['bgs_expenses_assigned']}")
     console.print(f"    MHB Expenses:           {state.stats['mhb_expenses_assigned']}")
     console.print(f"    CSB Expenses:           {state.stats['csb_expenses_assigned']}")
