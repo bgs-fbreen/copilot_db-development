@@ -1981,6 +1981,8 @@ def apply_patterns(dry_run, entity, from_date, to_date):
         console.print()
     
     # Build WHERE clause for filtering
+    # Note: where_clauses contains only static SQL fragments (safe)
+    # User input goes into params list (parameterized)
     where_clauses = ["bs.gl_account_code = 'TODO'"]
     params = []
     
@@ -1996,6 +1998,7 @@ def apply_patterns(dry_run, entity, from_date, to_date):
         where_clauses.append("bs.normalized_date <= %s")
         params.append(to_date)
     
+    # Join static SQL clauses (no user input in the structure)
     where_clause = " AND ".join(where_clauses)
     
     # Get all active patterns
@@ -2025,19 +2028,23 @@ def apply_patterns(dry_run, entity, from_date, to_date):
     
     for pattern in patterns:
         # Build the ILIKE condition based on pattern_type
+        # Returns static SQL clause and parameterized value (safe)
         like_condition, like_param = build_like_condition(pattern['pattern_type'], pattern['pattern'])
         
-        # Query to find matching transactions
-        # Pattern entity is already filtered in pattern_query, so we use it directly
+        # Query to find matching transactions in the pattern's entity
+        # Copy base WHERE clauses and parameters
         pattern_where_clauses = where_clauses.copy()
         pattern_params = params.copy()
         
-        # Add pattern entity filter
+        # Add pattern entity filter (pattern['entity'] comes from DB, safe)
         pattern_where_clauses.append("bs.entity = %s")
         pattern_params.append(pattern['entity'])
         
+        # Join static SQL clauses (no user input in the structure)
         pattern_where_clause = " AND ".join(pattern_where_clauses)
         
+        # Build query using f-string for structure (safe: only static SQL clauses)
+        # All user input is passed as parameters
         match_query = f"""
             SELECT 
                 bs.id,
@@ -2097,7 +2104,7 @@ def apply_patterns(dry_run, entity, from_date, to_date):
             
             if matches:
                 # Update all matching transactions for this pattern
-                # Extract IDs (already validated as integers from database query)
+                # Extract IDs (integers from database query, validated for safety)
                 transaction_ids = [m['id'] for m in matches if isinstance(m['id'], int)]
                 
                 if not transaction_ids:
@@ -2105,8 +2112,9 @@ def apply_patterns(dry_run, entity, from_date, to_date):
                     continue
                 
                 # Build UPDATE query with parameterized IN clause
-                # Generate one placeholder per ID
+                # Generate placeholders: one %s per ID (safe: known count)
                 placeholders = ','.join(['%s'] * len(transaction_ids))
+                # Use f-string for structure (safe: placeholders is just a string of "%s,%s,...")
                 update_query = f"""
                     UPDATE acc.bank_staging
                     SET gl_account_code = %s,
@@ -2115,7 +2123,7 @@ def apply_patterns(dry_run, entity, from_date, to_date):
                     WHERE id IN ({placeholders})
                 """
                 
-                # Combine GL code with all transaction IDs
+                # Combine GL code with all transaction IDs (all parameterized)
                 update_params = [pattern['gl_account_code']] + transaction_ids
                 execute_command(update_query, tuple(update_params))
                 
@@ -2127,6 +2135,7 @@ def apply_patterns(dry_run, entity, from_date, to_date):
                 updated_count += len(matches)
         
         # Get remaining TODO count
+        # Use f-string for structure (safe: where_clause is static SQL clauses)
         remaining_query = f"""
             SELECT COUNT(*) as count
             FROM acc.bank_staging bs
