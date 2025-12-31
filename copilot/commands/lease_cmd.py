@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from copilot.db import execute_query, execute_insert, execute_command, get_connection
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, datetime as dt
 from decimal import Decimal
 
 console = Console()
@@ -139,9 +139,11 @@ def property_update(property_code, address, purchase_date, purchase_price,
     updates.append("updated_at = CURRENT_TIMESTAMP")
     params.append(property_code)
     
+    # Build query safely with predefined column names
+    update_clause = ', '.join(updates)
     query = f"""
         UPDATE acc.properties 
-        SET {', '.join(updates)}
+        SET {update_clause}
         WHERE property_code = %s
     """
     
@@ -342,9 +344,11 @@ def lease_update(lease_id, status, rent, notes):
     updates.append("updated_at = CURRENT_TIMESTAMP")
     params.append(lease_id)
     
+    # Build query safely with predefined column names
+    update_clause = ', '.join(updates)
     query = f"""
         UPDATE acc.leases 
-        SET {', '.join(updates)}
+        SET {update_clause}
         WHERE id = %s
     """
     
@@ -827,11 +831,12 @@ def vacancy_add(property_code, start, end, rent, reason):
             vacancy_id = cur.fetchone()[0]
             conn.commit()
             
-            # Calculate lost rent
-            from datetime import datetime as dt
+            # Calculate lost rent using actual dates
             start_dt = dt.strptime(start, '%Y-%m-%d')
             end_dt = dt.strptime(end, '%Y-%m-%d')
             days = (end_dt - start_dt).days + 1
+            # Note: This is an estimate. Actual calculation should use daily rate
+            # For more accurate calculation, see the vacancy_monthly view
             lost_rent = (days / 30.0) * rent
             
             console.print(f"[green]✓ Vacancy period recorded for {property_code}[/green]")
