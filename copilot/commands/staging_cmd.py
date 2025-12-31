@@ -484,8 +484,9 @@ def staging_transfers(entity):
 def handle_transaction_detail_selection(description, entity):
     """Handle sub-selection flow for individual transactions within a description group
     
-    Returns:
-        bool: True if should return to main list, False to continue/exit
+    This function displays individual transactions within a description group and allows
+    the user to assign GL codes either collectively (with pattern) or individually (no pattern).
+    Always returns after user completes assignments or chooses to go back.
     """
     while True:
         clear_screen()
@@ -497,7 +498,7 @@ def handle_transaction_detail_selection(description, entity):
             # All transactions assigned, return to main list
             console.print("[green]✓ All transactions in this group have been assigned![/green]")
             console.input("\nPress Enter to continue...")
-            return True
+            return
         
         # Display header
         console.print(f"\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
@@ -537,7 +538,7 @@ def handle_transaction_detail_selection(description, entity):
         selection = console.input("[bold yellow]Enter choice: [/bold yellow]").strip().upper()
         
         if selection == 'Q':
-            return True
+            return
         
         elif selection == 'S':
             # Show GL code search/list
@@ -587,13 +588,13 @@ def handle_transaction_detail_selection(description, entity):
             try:
                 updated_count, pattern_action = assign_gl_code(description, gl_code, entity, user_context or None)
                 
-                console.print(f"\n[green]✓ Updated {updated_count} transactions → {gl_code}[/green]")
-                console.print(f"[green]✓ {pattern_action.capitalize()} pattern: \"{description}\" → {gl_code}[/green]")
+                console.print(f"\n[green]✓ Updated {updated_count} transaction(s) for \"{description}\" → {gl_code}[/green]")
+                console.print(f"[green]✓ {pattern_action.capitalize()} pattern for future imports[/green]")
                 if user_context:
                     console.print(f"[green]✓ Saved note: \"{user_context}\"[/green]")
                 
                 console.input("\n[dim]Press Enter to continue...[/dim]")
-                return True  # Return to main list
+                return  # Return to main list
                 
             except Exception as e:
                 console.print(f"\n[red]Error: {e}[/red]")
