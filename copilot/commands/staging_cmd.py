@@ -77,6 +77,31 @@ def get_gl_usage_stats(entity):
     return execute_query(query, (entity,))
 
 
+def get_transactions_by_description(description, entity):
+    """Fetch individual transactions for a description group"""
+    query = """
+        SELECT id, normalized_date, amount, check_number, source_account_code
+        FROM acc.bank_staging
+        WHERE description = %s
+          AND entity = %s
+          AND gl_account_code = 'TODO'
+        ORDER BY normalized_date
+    """
+    return execute_query(query, (description, entity))
+
+
+def assign_single_transaction(transaction_id, gl_code):
+    """Update a single transaction by ID - no pattern created"""
+    query = """
+        UPDATE acc.bank_staging
+        SET gl_account_code = %s,
+            match_method = 'manual',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """
+    execute_command(query, (gl_code, transaction_id))
+
+
 def assign_gl_code(description, gl_code, entity, notes=None):
     """Update all matching transactions and create/update pattern
     
@@ -456,6 +481,168 @@ def staging_transfers(entity):
     console.print(table)
 
 
+def handle_transaction_detail_selection(description, entity):
+    """Handle sub-selection flow for individual transactions within a description group
+    
+    Returns:
+        bool: True if should return to main list, False to continue/exit
+    """
+    while True:
+        clear_screen()
+        
+        # Get current transactions for this description
+        transactions = get_transactions_by_description(description, entity)
+        
+        if not transactions:
+            # All transactions assigned, return to main list
+            console.print("[green]✓ All transactions in this group have been assigned![/green]")
+            console.input("\nPress Enter to continue...")
+            return True
+        
+        # Display header
+        console.print(f"\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
+        console.print(f"[bold cyan]   \"{description}\" - {len(transactions)} transaction(s)[/bold cyan]")
+        console.print(f"[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
+        
+        # Display individual transactions table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="cyan", justify="right")
+        table.add_column("Date", style="cyan")
+        table.add_column("Amount", justify="right")
+        table.add_column("Check#", style="yellow")
+        table.add_column("Source Account", style="white")
+        
+        for idx, txn in enumerate(transactions, 1):
+            amount_style = "green" if txn['amount'] > 0 else "red"
+            table.add_row(
+                str(idx),
+                str(txn['normalized_date']),
+                f"[{amount_style}]${txn['amount']:,.2f}[/{amount_style}]",
+                txn['check_number'] or '-',
+                txn['source_account_code']
+            )
+        
+        console.print(table)
+        console.print()
+        
+        # Display options
+        console.print("[bold white]Options:[/bold white]")
+        console.print("  [bold cyan][A][/bold cyan] Assign ALL to same GL code (creates pattern)")
+        console.print(f"  [bold cyan][1-{len(transactions)}][/bold cyan] Select individual transaction (no pattern)")
+        console.print("  [bold cyan][S][/bold cyan] Search GL codes")
+        console.print("  [bold cyan][Q][/bold cyan] Back to main list")
+        console.print()
+        
+        # Get user selection
+        selection = console.input("[bold yellow]Enter choice: [/bold yellow]").strip().upper()
+        
+        if selection == 'Q':
+            return True
+        
+        elif selection == 'S':
+            # Show GL code search/list
+            console.print("\n[bold]Available GL Codes:[/bold]\n")
+            codes = list_gl_codes()
+            
+            if codes:
+                code_table = Table(show_header=True, header_style="bold magenta")
+                code_table.add_column("Code", style="cyan")
+                code_table.add_column("Name", style="white")
+                code_table.add_column("Type", style="green")
+                
+                for code in codes[:30]:  # Show first 30
+                    code_table.add_row(code['code'], code['name'], code['account_type'])
+                
+                console.print(code_table)
+                if len(codes) > 30:
+                    console.print(f"\n[dim]Showing 30 of {len(codes)} codes. Use 'copilot gl list' for full list.[/dim]")
+            
+            console.input("\n[dim]Press Enter to continue...[/dim]")
+            continue
+        
+        elif selection == 'A':
+            # Assign all transactions to same GL code
+            console.print(f"\n[bold]Assigning ALL {len(transactions)} transactions[/bold]\n")
+            
+            # Get optional context from user
+            user_context = console.input("Describe this transaction (optional, helps with recommendations): ")
+            
+            # Get GL code
+            gl_code = console.input("\n[bold yellow]Enter GL code: [/bold yellow]").strip()
+            
+            if not gl_code:
+                console.print("[yellow]No GL code entered, skipping...[/yellow]")
+                console.input("\nPress Enter to continue...")
+                continue
+            
+            # Confirm
+            confirmation = console.input(f"\n[bold yellow]Apply '{gl_code}' to all {len(transactions)} transactions? [Y/n]: [/bold yellow]").strip().lower()
+            
+            if confirmation in ('n', 'no'):
+                console.print("[dim]Skipped - no changes made[/dim]")
+                console.input("\nPress Enter to continue...")
+                continue
+            
+            # Assign the GL code using existing function (creates pattern)
+            try:
+                updated_count, pattern_action = assign_gl_code(description, gl_code, entity, user_context or None)
+                
+                console.print(f"\n[green]✓ Updated {updated_count} transactions → {gl_code}[/green]")
+                console.print(f"[green]✓ {pattern_action.capitalize()} pattern: \"{description}\" → {gl_code}[/green]")
+                if user_context:
+                    console.print(f"[green]✓ Saved note: \"{user_context}\"[/green]")
+                
+                console.input("\n[dim]Press Enter to continue...[/dim]")
+                return True  # Return to main list
+                
+            except Exception as e:
+                console.print(f"\n[red]Error: {e}[/red]")
+                console.input("\nPress Enter to continue...")
+                continue
+        
+        else:
+            # Try to parse as individual transaction number
+            try:
+                idx = int(selection) - 1
+                if idx < 0 or idx >= len(transactions):
+                    console.print("[red]Invalid selection[/red]")
+                    console.input("\nPress Enter to continue...")
+                    continue
+            except ValueError:
+                console.print("[red]Invalid input[/red]")
+                console.input("\nPress Enter to continue...")
+                continue
+            
+            # Assign individual transaction
+            selected_txn = transactions[idx]
+            
+            console.print(f"\n[bold green]Selected transaction #{idx + 1}:[/bold green]")
+            console.print(f"  Date: {selected_txn['normalized_date']}")
+            console.print(f"  Amount: ${selected_txn['amount']:,.2f}")
+            console.print(f"  Account: {selected_txn['source_account_code']}\n")
+            
+            # Get GL code
+            gl_code = console.input("[bold yellow]Enter GL code: [/bold yellow]").strip()
+            
+            if not gl_code:
+                console.print("[yellow]No GL code entered, skipping...[/yellow]")
+                console.input("\nPress Enter to continue...")
+                continue
+            
+            # Assign the single transaction (no pattern)
+            try:
+                assign_single_transaction(selected_txn['id'], gl_code)
+                console.print(f"\n[green]✓ Updated transaction #{idx + 1} → {gl_code}[/green]")
+                console.print(f"[dim](No pattern created - individual assignment)[/dim]")
+                console.input("\n[dim]Press Enter to continue...[/dim]")
+                # Loop back to show remaining transactions
+                
+            except Exception as e:
+                console.print(f"\n[red]Error: {e}[/red]")
+                console.input("\nPress Enter to continue...")
+                continue
+
+
 @staging_cmd.command('assign-todo')
 @click.option('--entity', '-e', required=True, help='Entity code (e.g., bgs)')
 def assign_todo(entity):
@@ -521,148 +708,7 @@ def assign_todo(entity):
         
         selected = todos[idx]
         description = selected['description']
-        count = selected['cnt']
-        total = selected['total']
         
-        clear_screen()
-        console.print(f"\n[bold green]Selected:[/bold green] {description} ({count} transactions, ${total:,.2f})\n")
-        
-        # Get optional context from user
-        user_context = console.input("Describe this transaction (optional, helps with recommendations): ")
-        console.print()
-        
-        # Display recommendations
-        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
-        console.print("[bold cyan] Recommendations (based on YOUR data):[/bold cyan]")
-        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
-        
-        # 0. Smart transfer detection (highest priority)
-        detected_gl_code = detect_transfer_gl_code(description, entity)
-        if detected_gl_code:
-            console.print("[bold green] 🎯 Smart Transfer Detection:[/bold green]")
-            console.print(f"   • Auto-detected transfer → [bold green]{detected_gl_code}[/bold green]")
-            console.print()
-        
-        # 1. Check existing patterns
-        existing = get_existing_patterns(description, entity)
-        if existing:
-            console.print("[bold white] From your existing patterns:[/bold white]")
-            for pattern in existing:
-                note_text = f" - {pattern['notes']}" if pattern['notes'] else ""
-                console.print(f"   • \"{pattern['pattern']}\" → [cyan]{pattern['gl_account_code']}[/cyan]{note_text}")
-            console.print()
-        else:
-            console.print("[dim] From your existing patterns:[/dim]")
-            truncated_desc = description[:MAX_DESCRIPTION_LENGTH]
-            if len(description) > MAX_DESCRIPTION_LENGTH:
-                truncated_desc += "..."
-            console.print(f"[dim]   (none found for \"{truncated_desc}\")[/dim]\n")
-        
-        # 2. Show similar historical assignments
-        similar = get_similar_assignments(description, entity)
-        if similar:
-            console.print("[bold white] From similar transactions you've assigned:[/bold white]")
-            for sim in similar:
-                sim_desc = sim['description'][:MAX_DESCRIPTION_LENGTH]
-                if len(sim['description']) > MAX_DESCRIPTION_LENGTH:
-                    sim_desc += "..."
-                console.print(f"   • \"{sim_desc}\" → [cyan]{sim['gl_account_code']}[/cyan] ({sim['cnt']} transactions)")
-            console.print()
-        
-        # 3. Show most-used GL codes
-        usage_stats = get_gl_usage_stats(entity)
-        if usage_stats:
-            console.print("[bold white] Your most-used codes:[/bold white]")
-            for stat in usage_stats:
-                console.print(f"   • [cyan]{stat['gl_account_code']}[/cyan] ({stat['cnt']} uses)")
-            console.print()
-        
-        # 4. Keyword matching suggestions (simple implementation)
-        if user_context:
-            keywords = user_context.lower()
-            suggestions = []
-            
-            # Simple keyword matching
-            if any(word in keywords for word in ['bookkeeping', 'accounting', 'professional']):
-                suggestions.extend(['exp:professional', 'exp:contractor'])
-            if any(word in keywords for word in ['wage', 'salary', 'payroll', 'employee']):
-                suggestions.append('exp:wages')
-            if any(word in keywords for word in ['contractor', 'freelance', '1099']):
-                suggestions.append('exp:contractor')
-            if any(word in keywords for word in ['rent', 'lease']):
-                suggestions.append('exp:rent')
-            if any(word in keywords for word in ['utilities', 'electric', 'gas', 'water']):
-                suggestions.append('exp:utilities')
-            
-            if suggestions:
-                console.print("[bold white] Keyword matches:[/bold white]")
-                for suggestion in set(suggestions):
-                    # Use original user_context for display (not lowercased)
-                    truncated_context = user_context[:MAX_KEYWORD_LENGTH]
-                    if len(user_context) > MAX_KEYWORD_LENGTH:
-                        truncated_context += "..."
-                    console.print(f"   • \"{truncated_context}\" → [cyan]{suggestion}[/cyan]")
-                console.print()
-        
-        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]\n")
-        
-        # Get GL code assignment
-        # If smart transfer detection found a GL code, offer it as default
-        if detected_gl_code:
-            prompt_text = f"[bold yellow]Enter GL code (or press Enter for '{detected_gl_code}', or '?' for full list): [/bold yellow]"
-            gl_code = console.input(prompt_text).strip()
-            # If user just presses Enter, use the detected code
-            if not gl_code:
-                gl_code = detected_gl_code
-        else:
-            gl_code = console.input("[bold yellow]Enter GL code (or '?' for full list): [/bold yellow]")
-        
-        if gl_code == '?':
-            # Show full GL code list
-            console.print("\n[bold]Available GL Codes:[/bold]\n")
-            codes = list_gl_codes()
-            
-            if codes:
-                code_table = Table(show_header=True, header_style="bold magenta")
-                code_table.add_column("Code", style="cyan")
-                code_table.add_column("Name", style="white")
-                code_table.add_column("Type", style="green")
-                
-                for code in codes[:20]:  # Show first 20
-                    code_table.add_row(code['code'], code['name'], code['account_type'])
-                
-                console.print(code_table)
-                if len(codes) > 20:
-                    console.print(f"\n[dim]Showing 20 of {len(codes)} codes. Use 'copilot gl list' for full list.[/dim]")
-            
-            gl_code = console.input("\n[bold yellow]Enter GL code: [/bold yellow]")
-        
-        if not gl_code or gl_code.lower() == 'q':
-            continue
-        
-        # Get confirmation for bulk assignment
-        console.print(f"\n[bold]Found {count} transaction(s) with description \"{description}\"[/bold]")
-        confirmation = console.input(f"[bold yellow]Apply '{gl_code}' to all {count} transactions? [Y/n]: [/bold yellow]").strip().lower()
-        
-        # Default is Yes (empty or 'y' or 'yes'), only skip if user explicitly says 'n' or 'no'
-        if confirmation in ('n', 'no'):
-            console.print("[dim]Skipped - no changes made[/dim]")
-            console.input("\nPress Enter to continue...")
-            continue
-        
-        # Assign the GL code
-        try:
-            updated_count, pattern_action = assign_gl_code(description, gl_code, entity, user_context or None)
-            
-            console.print(f"\n[green]✓ Updated {updated_count} transactions → {gl_code}[/green]")
-            console.print(f"[green]✓ {pattern_action.capitalize()} pattern: \"{description}\" → {gl_code}[/green]")
-            if user_context:
-                console.print(f"[green]✓ Saved note: \"{user_context}\"[/green]")
-            
-            console.print("\n")
-            console.input("[dim]Press Enter to continue...[/dim]")
-            
-        except Exception as e:
-            console.print(f"\n[red]Error: {e}[/red]")
-            console.input("\nPress Enter to continue...")
-            continue
+        # Enter sub-selection flow for individual transactions
+        handle_transaction_detail_selection(description, entity)
+        # After returning from sub-selection, loop back to main list (it will be refreshed)
