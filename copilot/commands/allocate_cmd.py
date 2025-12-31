@@ -600,8 +600,11 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     """Find Business-to-Business transfers only - matching amounts on same date, opposite signs.
     This is used for Step 2 (Business-to-Business Loans).
     
+    Only includes transfers where BOTH entities are in BUSINESS_ACCOUNTS (bgs, mhb).
+    
     If entity is None, find transfers across ALL business entities.
-    Returns: (transfers_list, entity_type_map)"""
+    Returns: (transfers_list, entity_type_map)
+    Note: entity_type_map is returned for use by downstream classify_transfer() function."""
     
     # Get entity types from database
     entity_type_map = get_entity_type_map()
