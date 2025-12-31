@@ -617,6 +617,15 @@ def assign_todo(entity):
         if not gl_code or gl_code.lower() == 'q':
             continue
         
+        # Get confirmation for bulk assignment
+        console.print(f"\n[bold]Found {count} transaction(s) with description \"{description}\"[/bold]")
+        confirmation = console.input(f"[bold yellow]Apply '{gl_code}' to all {count} transactions? [Y/n]: [/bold yellow]").strip().lower()
+        
+        if confirmation and confirmation not in ('y', 'yes'):
+            console.print("[dim]Skipped - no changes made[/dim]")
+            console.input("\nPress Enter to continue...")
+            continue
+        
         # Assign the GL code
         try:
             updated_count, pattern_action = assign_gl_code(description, gl_code, entity, user_context or None)
