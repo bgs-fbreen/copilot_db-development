@@ -51,6 +51,27 @@ CREATE INDEX idx_category_entity ON acc.category(entity);
 CREATE INDEX idx_category_type ON acc.category(account_type);
 
 -- ============================================================================
+-- GL ACCOUNTS
+-- ============================================================================
+
+CREATE TABLE acc.gl_accounts (
+    gl_account_code VARCHAR(100) PRIMARY KEY,
+    description VARCHAR(500) NOT NULL,
+    account_type VARCHAR(50) NOT NULL,
+    entity VARCHAR(50),
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE acc.gl_accounts IS 'General Ledger account codes for financial reporting';
+COMMENT ON COLUMN acc.gl_accounts.gl_account_code IS 'GL account code - should not contain spaces, use underscores instead';
+
+CREATE INDEX idx_gl_accounts_type ON acc.gl_accounts(account_type);
+CREATE INDEX idx_gl_accounts_entity ON acc.gl_accounts(entity);
+CREATE INDEX idx_gl_accounts_active ON acc.gl_accounts(is_active);
+
+-- ============================================================================
 -- TRANSACTIONS
 -- ============================================================================
 
