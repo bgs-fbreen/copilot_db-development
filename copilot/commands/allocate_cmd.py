@@ -579,7 +579,21 @@ def get_skipped_accounts(entity, period):
 
 def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=None):
     """Find potential intercompany transfers - matching amounts on same date, opposite signs.
-    If entity is None, find transfers across ALL entities."""
+    If entity is None, find transfers across ALL entities.
+    Only includes transfers between BUSINESS entities (excludes personal/support)."""
+    
+    # Get entity types from database
+    # Note: If acc.entity table doesn't exist yet (migration 012 not run),
+    # gracefully degrade to treating all entities as 'business' (old behavior)
+    entity_type_map = {}
+    try:
+        entity_types = execute_query("""
+            SELECT code, entity_type FROM acc.entity
+        """)
+        entity_type_map = {e['code']: e['entity_type'] for e in entity_types}
+    except Exception:
+        # Migration 012 not run yet - use default behavior
+        pass
     
     base_query = """
         SELECT 
@@ -623,7 +637,23 @@ def detect_intercompany_transfers(entity, start_date, end_date, active_accounts=
     
     base_query += " ORDER BY a.normalized_date"
     
-    return execute_query(base_query, tuple(params))
+    results = execute_query(base_query, tuple(params))
+    
+    # If no entity types loaded (migration not run), return all results (backward compatible)
+    if not entity_type_map:
+        return results
+    
+    # Filter results to only include transfers between business entities
+    intercompany_transfers = []
+    for row in results:
+        from_type = entity_type_map.get(row['from_entity'], 'business')
+        to_type = entity_type_map.get(row['to_entity'], 'business')
+        
+        # Only include if BOTH entities are 'business' type
+        if from_type == 'business' and to_type == 'business':
+            intercompany_transfers.append(row)
+    
+    return intercompany_transfers
 
 
 def detect_loan_payments(entity, start_date, end_date, active_accounts=None):
