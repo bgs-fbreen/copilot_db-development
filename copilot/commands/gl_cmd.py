@@ -76,7 +76,6 @@ def gl_search():
                 ORDER BY account_type, code
             """
             codes = execute_query(query)
-            title = "All GL Account Codes"
         else:
             # Search by code or name
             query = """
@@ -88,7 +87,6 @@ def gl_search():
             """
             search = f'%{search_term}%'
             codes = execute_query(query, (search, search))
-            title = f"GL Codes matching '{search_term}'"
         
         console.print()  # Blank line before table
         
