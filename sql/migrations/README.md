@@ -14,6 +14,23 @@ psql -h $DB_HOST -U $DB_USER -d $DB_NAME -f sql/migrations/012_add_entity_type.s
 psql -h YOUR_HOST -U YOUR_USER -d YOUR_DATABASE -f sql/migrations/012_add_entity_type.sql
 ```
 
+## Migration 013: Fix GL Account Code Spaces
+
+**Issue:** The `acc.gl_accounts` table has `gl_account_code` values that contain spaces. GL codes should use underscores instead of spaces for consistency and to avoid issues with parsing, searching, and command-line usage.
+
+**Fix:** This migration:
+1. Creates the `acc.gl_accounts` table if it doesn't exist
+2. Updates all existing `gl_account_code` values to replace spaces with underscores
+3. Adds a CHECK constraint to prevent future spaces in `gl_account_code`
+
+**Examples:**
+- `bgs:proj exp:gas` → `bgs:proj_exp:gas`
+- `bgs:some code` → `bgs:some_code`
+
+**Safe to run:** Yes, this migration is idempotent and can be run multiple times safely.
+
+**Required for:** Consistent GL code formatting across the system
+
 ## Migration 012: Add Entity Table with Entity Types
 
 **Issue:** The `copilot allocate wizard` command incorrectly flags transfers that are NOT intercompany:
@@ -58,6 +75,7 @@ psql -h YOUR_HOST -U YOUR_USER -d YOUR_DATABASE -f sql/migrations/012_add_entity
 | 010 | Create wizard_account_status table | Yes |
 | 011 | Add wizard_account_status unique constraint | Yes |
 | 012 | Add entity table with entity_type column | Yes |
+| 013 | Fix GL account code spaces (replace with underscores) | Yes |
 
 ## Notes
 
