@@ -1163,6 +1163,236 @@ def compare(year, property):
         net_var_color = "green" if net_var > 0 else "red"
         console.print(f"  [{net_var_color}]Net Income Variance:   ${net_var:>12,.2f}[/{net_var_color}]")
 
+@lease.command('revenue')
+@click.option('--year', type=int, required=True, help='Year for revenue report')
+@click.option('--property', help='Filter by specific property code')
+@click.option('--details/--no-details', default=True, help='Show detailed monthly breakdown')
+def revenue(year, property, details):
+    """Show rental revenue summary with variance analysis"""
+    
+    # Query for revenue summary data
+    query = """
+        SELECT 
+            property_code,
+            SUM(projected_rent) as projected_rent,
+            SUM(actual_rent) as actual_rent,
+            SUM(bounced_checks) as bounced_checks,
+            SUM(waived_rent) as waived_rent,
+            SUM(vacancy_loss) as vacancy_loss,
+            SUM(adjustments) as adjustments
+        FROM acc.v_property_monthly_comparison
+        WHERE year = %s
+    """
+    params = [year]
+    
+    if property:
+        query += " AND property_code = %s"
+        params.append(property)
+    
+    query += """
+        GROUP BY property_code
+        ORDER BY property_code
+    """
+    
+    summary_data = execute_query(query, params)
+    
+    if not summary_data:
+        console.print(f"[yellow]No data found for {year}[/yellow]")
+        return
+    
+    # Print header
+    title = f"RENTAL REVENUE SUMMARY - {year}"
+    console.print()
+    console.print("╔" + "═" * 78 + "╗")
+    console.print(f"║{title:^78}║")
+    console.print("╚" + "═" * 78 + "╝")
+    console.print()
+    
+    # Create summary table
+    table = Table(show_header=True, box=None)
+    table.add_column("Property", style="cyan", no_wrap=True)
+    table.add_column("Projected Rent", style="green", justify="right")
+    table.add_column("Actual Received", style="green", justify="right")
+    table.add_column("Variance", style="white", justify="right")
+    table.add_column("Collection %", style="white", justify="right")
+    
+    # Add border rows
+    console.print("┏" + "━" * 12 + "┳" + "━" * 16 + "┳" + "━" * 16 + "┳" + "━" * 14 + "┳" + "━" * 15 + "┓")
+    console.print("┃ Property   ┃ Projected Rent ┃ Actual Received┃ Variance     ┃ Collection %  ┃")
+    console.print("┡" + "━" * 12 + "╇" + "━" * 16 + "╇" + "━" * 16 + "╇" + "━" * 14 + "╇" + "━" * 15 + "┩")
+    
+    # Calculate totals
+    total_projected = 0
+    total_actual = 0
+    total_bounced = 0
+    total_waived = 0
+    total_vacancy = 0
+    total_adjustments = 0
+    
+    for row in summary_data:
+        projected = float(row['projected_rent'] or 0)
+        actual = float(row['actual_rent'] or 0)
+        variance = actual - projected
+        collection_pct = (actual / projected * 100) if projected > 0 else 0
+        
+        total_projected += projected
+        total_actual += actual
+        total_bounced += float(row['bounced_checks'] or 0)
+        total_waived += float(row['waived_rent'] or 0)
+        total_vacancy += float(row['vacancy_loss'] or 0)
+        total_adjustments += float(row['adjustments'] or 0)
+        
+        variance_str = f"-${abs(variance):>9,.2f}" if variance < 0 else f" ${variance:>9,.2f}"
+        
+        console.print(f"│ {row['property_code']:<10} │ ${projected:>13,.2f} │ ${actual:>13,.2f} │ {variance_str} │ {collection_pct:>12.1f}%  │")
+    
+    # Print totals separator and row
+    console.print("├" + "─" * 12 + "┼" + "─" * 16 + "┼" + "─" * 16 + "┼" + "─" * 14 + "┼" + "─" * 15 + "┤")
+    
+    total_variance = total_actual - total_projected
+    total_collection_pct = (total_actual / total_projected * 100) if total_projected > 0 else 0
+    total_variance_str = f"-${abs(total_variance):>9,.2f}" if total_variance < 0 else f" ${total_variance:>9,.2f}"
+    
+    console.print(f"│ [bold]TOTAL[/bold]      │ [bold]${total_projected:>13,.2f}[/bold] │ [bold]${total_actual:>13,.2f}[/bold] │ [bold]{total_variance_str}[/bold] │ [bold]{total_collection_pct:>12.1f}%[/bold]  │")
+    console.print("└" + "─" * 12 + "┴" + "─" * 16 + "┴" + "─" * 16 + "┴" + "─" * 14 + "┴" + "─" * 15 + "┘")
+    console.print()
+    
+    # Monthly breakdown if details is True
+    if details:
+        # Query for monthly data
+        monthly_query = """
+            SELECT 
+                property_code,
+                month,
+                SUM(actual_rent) as actual_rent
+            FROM acc.v_property_monthly_comparison
+            WHERE year = %s
+        """
+        monthly_params = [year]
+        
+        if property:
+            monthly_query += " AND property_code = %s"
+            monthly_params.append(property)
+        
+        monthly_query += """
+            GROUP BY property_code, month
+            ORDER BY property_code, month
+        """
+        
+        monthly_data = execute_query(monthly_query, monthly_params)
+        
+        if monthly_data:
+            console.print("REVENUE BY MONTH")
+            console.print("─" * 79)
+            
+            # Group by property
+            properties = {}
+            for row in monthly_data:
+                prop = row['property_code']
+                if prop not in properties:
+                    properties[prop] = {}
+                properties[prop][row['month']] = float(row['actual_rent'] or 0)
+            
+            # Print first half of year (Jan-Jun)
+            console.print("        Jan      Feb      Mar      Apr      May      Jun")
+            for prop in sorted(properties.keys()):
+                line = f"{prop:<8}"
+                for month in range(1, 7):
+                    amount = properties[prop].get(month, 0)
+                    line += f" ${amount:>7,.0f}"
+                console.print(line)
+            
+            # Print totals for first half
+            line = "[bold]TOTAL   [/bold]"
+            for month in range(1, 7):
+                total = sum(properties[prop].get(month, 0) for prop in properties.keys())
+                line += f" [bold]${total:>7,.0f}[/bold]"
+            console.print(line)
+            console.print()
+            
+            # Print second half of year (Jul-Dec)
+            console.print("        Jul      Aug      Sep      Oct      Nov      Dec")
+            for prop in sorted(properties.keys()):
+                line = f"{prop:<8}"
+                for month in range(7, 13):
+                    amount = properties[prop].get(month, 0)
+                    line += f" ${amount:>7,.0f}"
+                console.print(line)
+            
+            # Print totals for second half
+            line = "[bold]TOTAL   [/bold]"
+            for month in range(7, 13):
+                total = sum(properties[prop].get(month, 0) for prop in properties.keys())
+                line += f" [bold]${total:>7,.0f}[/bold]"
+            console.print(line)
+            console.print()
+    
+    # Deductions & Adjustments section
+    console.print("DEDUCTIONS & ADJUSTMENTS")
+    console.print("─" * 79)
+    
+    # Query for vacancy details
+    vacancy_query = """
+        SELECT 
+            p.property_code,
+            SUM(v.lost_rent) as total_lost,
+            COUNT(v.id) as vacancy_count,
+            SUM(v.days_vacant) as total_days
+        FROM acc.v_vacancy_monthly v
+        JOIN acc.properties p ON p.id = v.property_id
+        WHERE v.year = %s
+    """
+    vacancy_params = [year]
+    
+    if property:
+        vacancy_query += " AND p.property_code = %s"
+        vacancy_params.append(property)
+    
+    vacancy_query += " GROUP BY p.property_code"
+    
+    vacancy_details = execute_query(vacancy_query, vacancy_params)
+    
+    # Display vacancy loss
+    if vacancy_details and any(float(v['total_lost'] or 0) > 0 for v in vacancy_details):
+        for v in vacancy_details:
+            days = int(v['total_days'] or 0)
+            loss = float(v['total_lost'] or 0)
+            if loss > 0:
+                console.print(f"  Vacancy Loss:      ${loss:>8,.2f}  ({v['property_code']} - {days} days)")
+    else:
+        console.print(f"  Vacancy Loss:      ${total_vacancy:>8,.2f}")
+    
+    console.print(f"  Bounced Checks:    ${total_bounced:>8,.2f}")
+    console.print(f"  Rent Waived:       ${total_waived:>8,.2f}")
+    
+    # Calculate late fees from adjustments
+    late_fee_query = """
+        SELECT SUM(amount) as late_fees
+        FROM acc.rent_adjustments
+        WHERE adjustment_type = 'late_fee'
+        AND EXTRACT(YEAR FROM adjustment_date) = %s
+    """
+    late_fee_params = [year]
+    
+    if property:
+        late_fee_query += """ 
+            AND property_id IN (
+                SELECT id FROM acc.properties WHERE property_code = %s
+            )
+        """
+        late_fee_params.append(property)
+    
+    late_fee_result = execute_query(late_fee_query, late_fee_params)
+    late_fees = float(late_fee_result[0]['late_fees'] or 0) if late_fee_result else 0
+    
+    console.print(f"  Late Fees Collected: ${late_fees:>6,.2f}")
+    console.print()
+    
+    # Calculate net revenue
+    net_revenue = total_actual + total_adjustments - total_bounced
+    console.print(f"[bold]NET REVENUE:     ${net_revenue:>10,.2f}[/bold]")
+    console.print()
+
 @lease.command('help')
 def help_command():
     """Display comprehensive lease management cheat sheet"""
@@ -1229,6 +1459,7 @@ def show_lease_help():
     
     # Reports
     report_commands = [
+        ("revenue --year [--property]", "Show rental revenue summary"),
         ("contacts", "Show all tenant/guarantor contacts"),
         ("status", "Show current lease status for all properties"),
         ("report --year [--type]", "Generate income/expense report"),
@@ -1246,6 +1477,9 @@ def show_lease_help():
         
         ("Record a rent payment",
          "copilot lease payment-add --property 711pine --lease-id 1 --amount 850 \\\n    --date 2024-06-01 --for-month 2024-06"),
+        
+        ("Show rental revenue for 2024",
+         "copilot lease revenue --year 2024"),
         
         ("Compare projected vs actual P&L",
          "copilot lease compare --year 2024"),
