@@ -920,3 +920,63 @@ def import_status(account):
         
         console.print(detail_table)
         console.print()
+
+
+@import_cmd.command('help')
+def help_command():
+    """Display comprehensive import cheat sheet"""
+    from copilot.commands.help_utils import print_header, print_section, print_examples
+    
+    print_header("IMPORT CHEAT SHEET")
+    
+    # CSV Import Commands
+    csv_commands = [
+        ("csv <file> --account <code> [--period]", "Import CSV bank statement"),
+        ("", "  Auto-detects format and imports transactions"),
+        ("", "  Skips duplicates automatically"),
+    ]
+    print_section("CSV IMPORT COMMANDS", csv_commands)
+    
+    # List & Status Commands
+    list_commands = [
+        ("list [--account]", "List imported files and statistics"),
+        ("status [--account]", "Show import status by account"),
+    ]
+    print_section("LIST & STATUS COMMANDS", list_commands)
+    
+    # Supported CSV Formats
+    format_info = [
+        ("Chase Bank", "Auto-detected - includes check numbers"),
+        ("PNC Bank", "Auto-detected - standard format"),
+        ("Generic CSV", "Requires: Date, Description, Amount columns"),
+    ]
+    print_section("SUPPORTED CSV FORMATS", format_info)
+    
+    # Import Workflow
+    workflow_tips = [
+        ("1. Prepare", "Download CSV from bank website"),
+        ("2. Import", "Run copilot import csv command"),
+        ("3. Review", "Check for TODO transactions"),
+        ("4. Allocate", "Assign GL codes to transactions"),
+    ]
+    print_section("TYPICAL WORKFLOW", workflow_tips)
+    
+    # Examples
+    examples = [
+        ("Import Chase checking account statement",
+         "copilot import csv chase_checking_2024.csv --account bgs_checking"),
+        
+        ("Import with specific period",
+         "copilot import csv statement.csv --account bgs_checking --period 2024-06"),
+        
+        ("Check import status for all accounts",
+         "copilot import status"),
+        
+        ("List all imported files for specific account",
+         "copilot import list --account bgs_checking"),
+        
+        ("Dry run import (preview without importing)",
+         "copilot import csv statement.csv --account bgs_checking --dry-run"),
+    ]
+    print_examples("EXAMPLES", examples)
+

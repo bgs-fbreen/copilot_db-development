@@ -1163,5 +1163,95 @@ def compare(year, property):
         net_var_color = "green" if net_var > 0 else "red"
         console.print(f"  [{net_var_color}]Net Income Variance:   ${net_var:>12,.2f}[/{net_var_color}]")
 
+@lease.command('help')
+def help_command():
+    """Display comprehensive lease management cheat sheet"""
+    show_lease_help()
+
+
+def show_lease_help():
+    """Display lease management help content"""
+    from copilot.commands.help_utils import print_header, print_section, print_examples
+    
+    print_header("LEASE MANAGEMENT CHEAT SHEET")
+    
+    # Property Management
+    property_commands = [
+        ("property-list", "List all properties"),
+        ("property-show <code>", "Show property details"),
+        ("property-update <code> [opts]", "Update property info"),
+    ]
+    print_section("PROPERTY MANAGEMENT", property_commands)
+    
+    # Lease Management
+    lease_commands = [
+        ("list [--property] [--status]", "List all leases"),
+        ("add --property --start --end --rent [opts]", "Create new lease"),
+        ("show <id>", "Show lease with tenants/guarantors"),
+        ("update <id> [--status] [--rent] [--notes]", "Update lease"),
+        ("delete <id>", "Delete lease"),
+    ]
+    print_section("LEASE MANAGEMENT", lease_commands)
+    
+    # Tenant & Guarantor
+    tenant_commands = [
+        ("tenant-add <lease_id> --name [opts]", "Add tenant to lease"),
+        ("tenant-list <lease_id>", "List tenants for lease"),
+        ("tenant-remove <tenant_id>", "Remove tenant"),
+        ("guarantor-add <lease_id> --name [opts]", "Add guarantor/parent"),
+        ("guarantor-list <lease_id>", "List guarantors for lease"),
+    ]
+    print_section("TENANT & GUARANTOR", tenant_commands)
+    
+    # Expenses
+    expense_commands = [
+        ("expense-add --property --type --name --amount [opts]", "Add projected expense"),
+        ("expense-list [--property]", "List projected expenses"),
+        ("expense-remove <id>", "Remove projected expense"),
+        ("actual-expense-add --property --date --type [opts]", "Record actual expense"),
+    ]
+    print_section("EXPENSES", expense_commands)
+    
+    # Payments
+    payment_commands = [
+        ("payment-add --property --lease-id --amount --date [opts]", "Record rent payment"),
+        ("payment-list [--property] [--lease-id] [--year] [--month]", "List rent payments"),
+    ]
+    print_section("PAYMENTS", payment_commands)
+    
+    # Vacancy & Adjustments
+    vacancy_commands = [
+        ("vacancy-add --property --start --end --rent [opts]", "Track vacancy period"),
+        ("vacancy-list [--property]", "List vacancy periods"),
+        ("adjustment-add <lease_id> --date --type --amount [opts]", "Add rent adjustment"),
+    ]
+    print_section("VACANCY & ADJUSTMENTS", vacancy_commands)
+    
+    # Reports
+    report_commands = [
+        ("contacts", "Show all tenant/guarantor contacts"),
+        ("status", "Show current lease status for all properties"),
+        ("report --year [--type]", "Generate income/expense report"),
+        ("compare --year [--property]", "Compare projected vs actual P&L"),
+    ]
+    print_section("REPORTS", report_commands)
+    
+    # Examples
+    examples = [
+        ("Add a new lease with deposit applied to last month",
+         "copilot lease add --property 711pine --start 2024-06-01 --end 2025-05-31 \\\n    --rent 850 --deposit 850 --deposit-last-month"),
+        
+        ("Add student tenant with parent guarantor",
+         "copilot lease tenant-add 1 --name \"John Smith\" --primary --student --school \"CMU\"\n  copilot lease guarantor-add 1 --name \"Jane Smith\" --relationship parent"),
+        
+        ("Record a rent payment",
+         "copilot lease payment-add --property 711pine --lease-id 1 --amount 850 \\\n    --date 2024-06-01 --for-month 2024-06"),
+        
+        ("Compare projected vs actual P&L",
+         "copilot lease compare --year 2024"),
+    ]
+    print_examples("EXAMPLES", examples)
+
+
 if __name__ == '__main__':
     lease()

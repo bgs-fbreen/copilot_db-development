@@ -105,3 +105,57 @@ def gl_search():
         
         console.print(table)
         console.print()
+
+
+@gl_cmd.command('help')
+def help_command():
+    """Display comprehensive GL account code cheat sheet"""
+    show_gl_help()
+
+
+def show_gl_help():
+    """Display GL account code help content"""
+    from copilot.commands.help_utils import print_header, print_section, print_examples
+    
+    print_header("GL ACCOUNT CODE CHEAT SHEET")
+    
+    # List Commands
+    list_commands = [
+        ("list [--type]", "List all GL account codes"),
+        ("", "  Filter by account type: expense, income, asset, liability, equity"),
+    ]
+    print_section("LIST COMMANDS", list_commands)
+    
+    # Search Commands
+    search_commands = [
+        ("search", "Interactive GL code search"),
+        ("", "  Search by code or description, type 'q' to quit"),
+    ]
+    print_section("SEARCH COMMANDS", search_commands)
+    
+    # Common GL Account Types
+    types_info = [
+        ("expense", "Operating expenses (rent, utilities, supplies, etc.)"),
+        ("income", "Revenue and income accounts"),
+        ("asset", "Assets (cash, equipment, property, etc.)"),
+        ("liability", "Liabilities (loans, payables, etc.)"),
+        ("equity", "Owner's equity and retained earnings"),
+    ]
+    print_section("ACCOUNT TYPES", types_info)
+    
+    # Examples
+    examples = [
+        ("List all expense accounts",
+         "copilot gl list --type expense"),
+        
+        ("List all accounts (no filter)",
+         "copilot gl list"),
+        
+        ("Interactive search for specific code",
+         "copilot gl search\n  Search: rent\n  [Shows all accounts containing 'rent']"),
+        
+        ("Search and quit",
+         "copilot gl search\n  Search: utilities\n  Search: q"),
+    ]
+    print_examples("EXAMPLES", examples)
+

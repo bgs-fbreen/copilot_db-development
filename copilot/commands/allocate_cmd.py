@@ -2151,3 +2151,72 @@ def apply_patterns(dry_run, entity, from_date, to_date):
         console.print(f"[bold]Total:[/bold] {updated_count} transactions updated")
         console.print(f"[bold]Remaining TODOs:[/bold] {remaining_count}")
         console.print()
+
+
+@allocate.command('help')
+def help_command():
+    """Display comprehensive transaction allocation cheat sheet"""
+    show_allocate_help()
+
+
+def show_allocate_help():
+    """Display transaction allocation help content"""
+    from copilot.commands.help_utils import print_header, print_section, print_examples
+    
+    print_header("TRANSACTION ALLOCATION CHEAT SHEET")
+    
+    # Interactive Allocation
+    interactive_commands = [
+        ("interactive [--account] [--limit]", "Interactive allocation workflow"),
+        ("", "  Review and categorize unallocated transactions one by one"),
+    ]
+    print_section("INTERACTIVE ALLOCATION", interactive_commands)
+    
+    # Auto Allocation
+    auto_commands = [
+        ("auto [--account] [--min-confidence]", "Auto-allocate using patterns"),
+        ("", "  Automatically categorize transactions based on payee patterns"),
+        ("apply-patterns [--entity] [--from-date] [--to-date]", "Apply vendor GL patterns"),
+        ("", "  Bulk apply existing patterns to TODO transactions"),
+    ]
+    print_section("AUTO ALLOCATION", auto_commands)
+    
+    # List & Review
+    list_commands = [
+        ("list [--account] [--category] [--entity] [--month]", "List transactions"),
+        ("", "  View allocated and unallocated transactions with filters"),
+    ]
+    print_section("LIST & REVIEW", list_commands)
+    
+    # Allocation Wizard
+    wizard_commands = [
+        ("wizard --entity --period", "Step-by-step allocation wizard"),
+        ("", "  Guided process for month-end allocation"),
+        ("", "  1. Detect and assign transfers"),
+        ("", "  2. Assign business-to-business loans"),
+        ("", "  3. Assign owner draws"),
+        ("", "  4. Assign owner contributions"),
+        ("", "  5. Detect mortgage payments"),
+        ("", "  6. Review recurring vendors"),
+    ]
+    print_section("ALLOCATION WIZARD", wizard_commands)
+    
+    # Examples
+    examples = [
+        ("Run interactive allocation for specific account",
+         "copilot allocate interactive --account checking --limit 20"),
+        
+        ("Auto-allocate with high confidence threshold",
+         "copilot allocate auto --account checking --min-confidence 0.9"),
+        
+        ("Run complete allocation wizard for month",
+         "copilot allocate wizard --entity bgs --period 2024-06"),
+        
+        ("Apply patterns to TODO transactions",
+         "copilot allocate apply-patterns --entity bgs --from-date 2024-06-01"),
+        
+        ("List transactions for specific month",
+         "copilot allocate list --entity bgs --month 2024-06"),
+    ]
+    print_examples("EXAMPLES", examples)
+
