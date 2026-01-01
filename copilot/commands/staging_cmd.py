@@ -713,3 +713,72 @@ def assign_todo(entity):
         # Enter sub-selection flow for individual transactions
         handle_transaction_detail_selection(description, entity)
         # After returning from sub-selection, loop back to main list (it will be refreshed)
+
+
+@staging_cmd.command('help')
+def help_command():
+    """Display comprehensive bank staging cheat sheet"""
+    show_staging_help()
+
+
+def show_staging_help():
+    """Display bank staging help content"""
+    from copilot.commands.help_utils import print_header, print_section, print_examples
+    
+    print_header("BANK STAGING CHEAT SHEET")
+    
+    # List & View Commands
+    list_commands = [
+        ("list [--entity] [--account] [--status] [--limit]", "List staged transactions"),
+        ("", "  View transactions pending allocation"),
+        ("todos [--entity]", "Show TODO transactions grouped by description"),
+        ("", "  Quick overview of unallocated transactions"),
+    ]
+    print_section("LIST & VIEW COMMANDS", list_commands)
+    
+    # Assign Commands
+    assign_commands = [
+        ("assign <id> --gl-code", "Assign GL code to single transaction"),
+        ("assign-todo --entity", "Interactive TODO assignment workflow"),
+        ("", "  Assign GL codes to groups of similar transactions"),
+    ]
+    print_section("ASSIGN COMMANDS", assign_commands)
+    
+    # Summary & Analysis
+    summary_commands = [
+        ("summary [--entity]", "Show allocation summary by GL code"),
+        ("", "  Overview of allocated transactions by category"),
+        ("transfers [--entity]", "Show potential transfer transactions"),
+        ("", "  Identify transactions that may be transfers"),
+    ]
+    print_section("SUMMARY & ANALYSIS", summary_commands)
+    
+    # Workflow Tips
+    workflow_tips = [
+        ("1. Import", "Import bank statements (copilot import csv)"),
+        ("2. Review", "Review TODO transactions (copilot staging todos)"),
+        ("3. Assign", "Assign GL codes (copilot staging assign-todo)"),
+        ("4. Verify", "Check summary (copilot staging summary)"),
+        ("5. Allocate", "Run allocation wizard (copilot allocate wizard)"),
+    ]
+    print_section("TYPICAL WORKFLOW", workflow_tips)
+    
+    # Examples
+    examples = [
+        ("List all TODO transactions for entity",
+         "copilot staging todos --entity bgs"),
+        
+        ("Interactive TODO assignment",
+         "copilot staging assign-todo --entity bgs"),
+        
+        ("Assign GL code to specific transaction",
+         "copilot staging assign 123 --gl-code 6100"),
+        
+        ("View allocation summary",
+         "copilot staging summary --entity bgs"),
+        
+        ("List transactions for specific account",
+         "copilot staging list --entity bgs --account checking --limit 50"),
+    ]
+    print_examples("EXAMPLES", examples)
+

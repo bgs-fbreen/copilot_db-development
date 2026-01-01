@@ -716,3 +716,80 @@ def actual(project_code):
     
     show_project_actual(project_code)
 
+
+@project.command('help')
+def help_command():
+    """Display comprehensive BGS project management cheat sheet"""
+    show_project_help()
+
+
+def show_project_help():
+    """Display project management help content"""
+    from copilot.commands.help_utils import print_header, print_section, print_examples
+    
+    print_header("BGS PROJECT MANAGEMENT CHEAT SHEET")
+    
+    # Project Commands
+    project_commands = [
+        ("list [--client] [--status]", "List all projects"),
+        ("create-dirs <project_code>", "Create directory structure for project"),
+        ("create-baseline <project_code>", "Create baseline budget for project"),
+        ("actual [<project_code>]", "Display baseline vs actual spending"),
+        ("delete <project_code>", "Delete project (requires confirmation)"),
+    ]
+    print_section("PROJECT COMMANDS", project_commands)
+    
+    # Baseline & Budget
+    baseline_commands = [
+        ("", "Baseline budget tracks:"),
+        ("", "  - Labor costs by role"),
+        ("", "  - Material and equipment costs"),
+        ("", "  - Subcontractor costs"),
+        ("", "  - Other expenses"),
+    ]
+    print_section("BASELINE & BUDGET", baseline_commands)
+    
+    # Project Status
+    status_info = [
+        ("active", "Project is currently active"),
+        ("completed", "Project has been completed"),
+        ("on-hold", "Project is temporarily on hold"),
+        ("cancelled", "Project has been cancelled"),
+    ]
+    print_section("PROJECT STATUS", status_info)
+    
+    # Directory Structure
+    directory_info = [
+        ("", "Standard project directory structure:"),
+        ("", "  project_code/"),
+        ("", "    ├── contracts/"),
+        ("", "    ├── invoices/"),
+        ("", "    ├── photos/"),
+        ("", "    ├── documents/"),
+        ("", "    └── reports/"),
+    ]
+    print_section("DIRECTORY STRUCTURE", directory_info)
+    
+    # Examples
+    examples = [
+        ("List all active projects",
+         "copilot project list --status active"),
+        
+        ("Create project directories",
+         "copilot project create-dirs PROJ001"),
+        
+        ("Create baseline budget",
+         "copilot project create-baseline PROJ001"),
+        
+        ("View project actual vs baseline",
+         "copilot project actual PROJ001"),
+        
+        ("Interactive actual view (select from list)",
+         "copilot project actual"),
+        
+        ("Delete a project",
+         "copilot project delete PROJ001"),
+    ]
+    print_examples("EXAMPLES", examples)
+
+
