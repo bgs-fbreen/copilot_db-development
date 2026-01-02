@@ -16,10 +16,26 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from copilot.db import execute_query, execute_insert, execute_command, get_connection
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import csv
+import psycopg2
 
 console = Console()
+
+# ============================================================================
+# CONSTANTS
+# ============================================================================
+
+# Escrow type detection thresholds (for type 710 transactions)
+ESCROW_PROPERTY_TAX_JULY_MIN = 3000  # Summer tax minimum
+ESCROW_PROPERTY_TAX_JULY_MAX = 5000  # Summer tax maximum
+ESCROW_PROPERTY_TAX_DEC_MIN = 1000   # Winter tax minimum
+ESCROW_PROPERTY_TAX_DEC_MAX = 2000   # Winter tax maximum
+ESCROW_INSURANCE_MIN = 700           # Insurance minimum
+ESCROW_INSURANCE_MAX = 1500          # Insurance maximum
+
+# Allowed entity schemas for SQL injection prevention
+ALLOWED_ENTITIES = {'mhb', 'per'}
 
 # ============================================================================
 # MAIN COMMAND GROUP
@@ -283,22 +299,322 @@ def mortgage_help():
     console.print(Panel(help_text, title="Mortgage Commands", border_style="cyan"))
 
 # ============================================================================
-# MORTGAGE IMPORT COMMAND (Placeholder)
+# MORTGAGE IMPORT COMMAND
 # ============================================================================
 
+def parse_csv_date(date_str):
+    """Parse date from CSV 'Effective / Posted' column - extract first date"""
+    if not date_str:
+        return None
+    
+    # Handle "12/30/2025 12/24/2025" format - take first date
+    parts = date_str.strip().split()
+    first_date = parts[0] if parts else date_str
+    
+    date_formats = [
+        '%m/%d/%Y',      # 12/30/2025
+        '%m/%d/%y',      # 12/30/25
+        '%Y-%m-%d',      # 2025-12-30
+    ]
+    
+    for fmt in date_formats:
+        try:
+            return datetime.strptime(first_date.strip(), fmt).date()
+        except ValueError:
+            continue
+    
+    console.print(f"[yellow]Warning: Could not parse date '{date_str}'[/yellow]")
+    return None
+
+def parse_csv_amount(amount_str):
+    """Parse amount from CSV, handling negative values and currency symbols"""
+    if not amount_str:
+        return Decimal('0.00')
+    
+    # Remove currency symbols, spaces, and commas
+    amount_str = amount_str.replace('$', '').replace(',', '').strip()
+    
+    # Handle parentheses for negative amounts
+    if amount_str.startswith('(') and amount_str.endswith(')'):
+        amount_str = '-' + amount_str[1:-1]
+    
+    try:
+        return Decimal(amount_str)
+    except (ValueError, InvalidOperation):
+        return Decimal('0.00')
+
+def detect_escrow_type(type_code, amount, trans_date, description):
+    """
+    Detect escrow type for type 710 transactions
+    Based on amount and date patterns
+    """
+    if type_code == '716':
+        return 'auto_disbursement'
+    
+    if type_code != '710':
+        return 'other'
+    
+    # Use Decimal directly, no float conversion to maintain precision
+    amount_abs = abs(amount)
+    month = trans_date.month
+    
+    # Large amounts in July: property_tax (summer tax)
+    if month == 7 and ESCROW_PROPERTY_TAX_JULY_MIN <= amount_abs <= ESCROW_PROPERTY_TAX_JULY_MAX:
+        return 'property_tax'
+    
+    # Large amounts in December: property_tax (winter tax)
+    if month == 12 and ESCROW_PROPERTY_TAX_DEC_MIN <= amount_abs <= ESCROW_PROPERTY_TAX_DEC_MAX:
+        return 'property_tax'
+    
+    # Amounts in insurance range not in Jul/Dec: insurance
+    if ESCROW_INSURANCE_MIN <= amount_abs <= ESCROW_INSURANCE_MAX and month not in [7, 12]:
+        return 'insurance'
+    
+    # Default to other
+    return 'other'
+
+def get_entity_and_mortgage(property_code):
+    """
+    Get entity schema and mortgage record for property_code
+    Returns: (entity, mortgage_record) or (None, None) if not found
+    """
+    # parnell -> per schema, all others -> mhb schema
+    entity = 'per' if property_code == 'parnell' else 'mhb'
+    
+    # Validate entity against whitelist to prevent SQL injection
+    if entity not in ALLOWED_ENTITIES:
+        console.print(f"[red]Error: Invalid entity '{entity}'[/red]")
+        return None, None
+    
+    query = f"""
+        SELECT id, current_balance, interest_rate
+        FROM {entity}.mortgage
+        WHERE property_code = %s AND status = 'active'
+    """
+    
+    result = execute_query(query, (property_code,))
+    if result:
+        return entity, result[0]
+    return None, None
+
 @mortgage.command('import')
-@click.option('--file', type=click.Path(exists=True), required=True, help='CSV file to import')
-@click.option('--property', required=True, help='Property code')
-def mortgage_import(file, property):
-    """Import mortgage payments from bank CSV and calculate P&I split"""
-    console.print("[yellow]This command is not yet implemented[/yellow]")
-    console.print(f"Would import from: {file}")
-    console.print(f"For property: {property}")
-    console.print("\nThis will:")
-    console.print("1. Parse CSV transactions")
-    console.print("2. Calculate interest = balance × (rate / 12)")
-    console.print("3. Calculate principal = payment - interest")
-    console.print("4. Update balance and create payment record")
+@click.option('--file', '-f', type=click.Path(exists=True), required=True, help='CSV file to import')
+@click.option('--property', '-p', required=True, help='Property code (711pine, 819helen, 905brown, parnell)')
+@click.option('--dry-run', is_flag=True, help='Preview without inserting')
+def mortgage_import(file, property, dry_run):
+    """Import mortgage payment history from Central Savings Bank CSV"""
+    
+    # Get entity and mortgage record
+    entity, mortgage = get_entity_and_mortgage(property)
+    
+    if not mortgage or not entity:
+        console.print(f"[red]Error: No active mortgage found for property '{property}'[/red]")
+        return
+    
+    # Additional validation: entity must be in allowed list (defense in depth)
+    if entity not in ALLOWED_ENTITIES:
+        console.print(f"[red]Error: Invalid entity schema '{entity}'[/red]")
+        return
+    
+    mortgage_id = mortgage['id']
+    
+    # Parse CSV file
+    try:
+        with open(file, 'r', encoding='utf-8-sig', newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            rows = list(reader)
+    except (FileNotFoundError, csv.Error, UnicodeDecodeError) as e:
+        console.print(f"[red]Error reading CSV file: {e}[/red]")
+        return
+    
+    if not rows:
+        console.print("[yellow]No data found in CSV file[/yellow]")
+        return
+    
+    # Process rows and categorize
+    payments_to_import = []
+    escrow_to_import = []
+    duplicates = 0
+    
+    # Get existing payments and escrow to detect duplicates
+    existing_payments = execute_query(f"""
+        SELECT payment_date, amount 
+        FROM {entity}.mortgage_payment 
+        WHERE mortgage_id = %s
+    """, (mortgage_id,))
+    
+    existing_escrow = execute_query(f"""
+        SELECT disbursement_date, amount 
+        FROM {entity}.mortgage_escrow 
+        WHERE mortgage_id = %s
+    """, (mortgage_id,))
+    
+    existing_payment_set = {(p['payment_date'], Decimal(str(p['amount']))) for p in existing_payments}
+    existing_escrow_set = {(e['disbursement_date'], Decimal(str(e['amount']))) for e in existing_escrow}
+    
+    for row in rows:
+        # Parse date
+        effective_date = parse_csv_date(row.get('Effective / Posted', ''))
+        if not effective_date:
+            continue
+        
+        # Parse type code
+        type_field = row.get('Type', '')
+        type_code = type_field.split(' - ')[0].strip() if ' - ' in type_field else ''
+        
+        # Parse amounts
+        amount = parse_csv_amount(row.get('Amount', ''))
+        principal = parse_csv_amount(row.get('Principal', ''))
+        interest = parse_csv_amount(row.get('Interest', ''))
+        balance = parse_csv_amount(row.get('Balance', ''))
+        
+        # Route based on type code
+        if type_code in ('620', '612'):
+            # Payment transaction
+            if (effective_date, amount) in existing_payment_set:
+                duplicates += 1
+                continue
+            
+            payments_to_import.append({
+                'date': effective_date,
+                'amount': amount,
+                'principal': principal,
+                'interest': interest,
+                'balance': balance,
+                'type': type_field
+            })
+        
+        elif type_code in ('710', '716'):
+            # Escrow transaction - disbursements from escrow account
+            # CSV amounts are positive, store as positive in disbursement table
+            escrow_amount = abs(amount)
+            
+            if (effective_date, escrow_amount) in existing_escrow_set:
+                duplicates += 1
+                continue
+            
+            escrow_type = detect_escrow_type(type_code, amount, effective_date, type_field)
+            
+            escrow_to_import.append({
+                'date': effective_date,
+                'amount': escrow_amount,
+                'escrow_type': escrow_type,
+                'description': type_field
+            })
+    
+    # Calculate summary by escrow type
+    escrow_summary = {}
+    for esc in escrow_to_import:
+        esc_type = esc['escrow_type']
+        escrow_summary[esc_type] = escrow_summary.get(esc_type, 0) + 1
+    
+    # Get the most recent balance
+    new_balance = None
+    if payments_to_import:
+        # Sort by date to get the most recent
+        sorted_payments = sorted(payments_to_import, key=lambda x: x['date'], reverse=True)
+        new_balance = sorted_payments[0]['balance']
+    
+    # Display summary
+    if dry_run:
+        console.print(f"\n[bold cyan]Dry Run - Preview of import for {property}[/bold cyan]")
+        console.print("─" * 50)
+        console.print(f"File: {file}")
+        console.print(f"Records: {len(rows)}")
+        console.print(f"\nPayments to import: {len(payments_to_import)}")
+        console.print(f"Escrow transactions: {len(escrow_to_import)}")
+        
+        if escrow_summary:
+            for esc_type, count in sorted(escrow_summary.items()):
+                console.print(f"  - {esc_type.replace('_', ' ').title()}: {count}")
+        
+        console.print(f"\nDuplicates to skip: {duplicates}")
+        
+        if new_balance is not None:
+            console.print(f"\nNew balance will be: ${new_balance:,.2f}")
+        
+        console.print("\n[yellow]Run without --dry-run to import.[/yellow]")
+        return
+    
+    # Perform actual import
+    console.print(f"\n[bold cyan]Importing mortgage history for {property}...[/bold cyan]")
+    console.print("─" * 50)
+    
+    conn = None
+    cur = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        # Insert payments
+        payment_count = 0
+        for pmt in payments_to_import:
+            cur.execute(f"""
+                INSERT INTO {entity}.mortgage_payment 
+                (mortgage_id, payment_date, amount, principal, interest, escrow, balance_after, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                mortgage_id,
+                pmt['date'],
+                pmt['amount'],
+                pmt['principal'],
+                pmt['interest'],
+                Decimal('0.00'),  # escrow portion of payment (0 since escrow tracked separately)
+                pmt['balance'],
+                f"Imported from CSV - {pmt['type']}"
+            ))
+            payment_count += 1
+        
+        # Insert escrow transactions
+        escrow_count = 0
+        for esc in escrow_to_import:
+            cur.execute(f"""
+                INSERT INTO {entity}.mortgage_escrow 
+                (mortgage_id, disbursement_date, expense_type, payee, amount, description)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                mortgage_id,
+                esc['date'],
+                esc['escrow_type'],
+                'Central Savings Bank',
+                esc['amount'],  # Already positive from processing above
+                esc['description']
+            ))
+            escrow_count += 1
+        
+        # Update current balance if we have a new one
+        if new_balance is not None:
+            cur.execute(f"""
+                UPDATE {entity}.mortgage 
+                SET current_balance = %s 
+                WHERE id = %s
+            """, (new_balance, mortgage_id))
+        
+        conn.commit()
+        
+        console.print(f"[green]✓[/green] Imported {payment_count} payments")
+        console.print(f"[green]✓[/green] Imported {escrow_count} escrow transactions")
+        if new_balance is not None:
+            console.print(f"[green]✓[/green] Updated current balance: ${new_balance:,.2f}")
+        
+        if duplicates > 0:
+            console.print(f"\nSkipped {duplicates} duplicates")
+        
+        console.print(f"\n[bold green]Import completed successfully![/bold green]")
+        
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        console.print(f"[red]Database error during import: {e}[/red]")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        console.print(f"[red]Unexpected error during import: {e}[/red]")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 # ============================================================================
 # MORTGAGE PROJECT COMMAND (Placeholder)
