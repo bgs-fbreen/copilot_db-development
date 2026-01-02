@@ -459,7 +459,7 @@ def mortgage_import(file, property, dry_run):
         
         elif type_code in ('710', '716'):
             # Escrow transaction
-            # Escrow amounts should be negative (disbursements)
+            # CSV amounts are positive, convert to negative for disbursements
             escrow_amount = -abs(amount)
             
             if (effective_date, float(escrow_amount)) in existing_escrow_set:
@@ -548,7 +548,7 @@ def mortgage_import(file, property, dry_run):
                 esc['date'],
                 esc['escrow_type'],
                 'Central Savings Bank',
-                -esc['amount'],  # Store as positive amount
+                abs(esc['amount']),  # Store as positive amount in database
                 esc['description']
             ))
             escrow_count += 1
