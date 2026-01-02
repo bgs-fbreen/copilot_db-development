@@ -18,6 +18,7 @@ from copilot.db import execute_query, execute_insert, execute_command, get_conne
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import csv
+import psycopg2
 
 console = Console()
 
@@ -418,10 +419,10 @@ def mortgage_import(file, property, dry_run):
     
     # Parse CSV file
     try:
-        with open(file, 'r') as csvfile:
+        with open(file, 'r', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             rows = list(reader)
-    except Exception as e:
+    except (FileNotFoundError, csv.Error, UnicodeDecodeError) as e:
         console.print(f"[red]Error reading CSV file: {e}[/red]")
         return
     
@@ -600,10 +601,14 @@ def mortgage_import(file, property, dry_run):
         
         console.print(f"\n[bold green]Import completed successfully![/bold green]")
         
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        console.print(f"[red]Database error during import: {e}[/red]")
     except Exception as e:
         if conn:
             conn.rollback()
-        console.print(f"[red]Error during import: {e}[/red]")
+        console.print(f"[red]Unexpected error during import: {e}[/red]")
     finally:
         if cur:
             cur.close()
