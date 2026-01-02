@@ -159,6 +159,13 @@ CREATE UNIQUE INDEX idx_per_projection_unique ON per.mortgage_projection(mortgag
 -- PART 2: ENHANCE MHB SCHEMA - Add mortgage and property management tables
 -- ============================================================================
 
+-- Add gl_account_code column to existing mhb.mortgage table
+ALTER TABLE mhb.mortgage ADD COLUMN IF NOT EXISTS gl_account_code VARCHAR(100);
+
+COMMENT ON COLUMN mhb.mortgage.gl_account_code IS 'GL account code (e.g., mhb:mortgage:711pine)';
+
+CREATE INDEX IF NOT EXISTS idx_mortgage_gl ON mhb.mortgage(gl_account_code);
+
 -- ============================================================================
 -- MHB.MORTGAGE_PAYMENT - Payment history with principal/interest split
 -- ============================================================================
@@ -354,80 +361,96 @@ END $$;
 DO $$
 BEGIN
     -- Insert 711 Pine Street mortgage
-    INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, issued_on, original_balance, current_balance, interest_rate, matures_on, status)
-    VALUES (
-        '711pine',
-        'mhb:mortgage:711pine',
-        'Central Savings Bank',
-        '2020-04-14',
-        66621.85,
-        66621.85,
-        8.500,
-        '2040-04-17',
-        'active'
-    )
-    ON CONFLICT DO NOTHING;
+    IF NOT EXISTS (SELECT 1 FROM mhb.mortgage WHERE property_code = '711pine') THEN
+        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_amount, current_balance, interest_rate, start_date, maturity_date, status)
+        VALUES (
+            '711pine',
+            'mhb:mortgage:711pine',
+            'Central Savings Bank',
+            66621.85,
+            66621.85,
+            8.500,
+            '2020-04-14',
+            '2040-04-17',
+            'active'
+        );
+        RAISE NOTICE 'Inserted mortgage for 711pine';
+    END IF;
     
     -- Insert 905 Brown Street mortgage
-    INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, issued_on, original_balance, current_balance, interest_rate, matures_on, status)
-    VALUES (
-        '905brown',
-        'mhb:mortgage:905brown',
-        'Central Savings Bank',
-        '2019-08-16',
-        36620.00,
-        36620.00,
-        7.950,
-        '2039-08-16',
-        'active'
-    )
-    ON CONFLICT DO NOTHING;
+    IF NOT EXISTS (SELECT 1 FROM mhb.mortgage WHERE property_code = '905brown') THEN
+        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_amount, current_balance, interest_rate, start_date, maturity_date, status)
+        VALUES (
+            '905brown',
+            'mhb:mortgage:905brown',
+            'Central Savings Bank',
+            36620.00,
+            36620.00,
+            7.950,
+            '2019-08-16',
+            '2039-08-16',
+            'active'
+        );
+        RAISE NOTICE 'Inserted mortgage for 905brown';
+    END IF;
     
     -- Insert 819 Helen Street mortgage
-    INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, issued_on, original_balance, current_balance, interest_rate, matures_on, status)
-    VALUES (
-        '819helen',
-        'mhb:mortgage:819helen',
-        'Central Savings Bank',
-        '2021-03-19',
-        67014.00,
-        67014.00,
-        8.250,
-        '2041-03-19',
-        'active'
-    )
-    ON CONFLICT DO NOTHING;
+    IF NOT EXISTS (SELECT 1 FROM mhb.mortgage WHERE property_code = '819helen') THEN
+        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_amount, current_balance, interest_rate, start_date, maturity_date, status)
+        VALUES (
+            '819helen',
+            'mhb:mortgage:819helen',
+            'Central Savings Bank',
+            67014.00,
+            67014.00,
+            8.250,
+            '2021-03-19',
+            '2041-03-19',
+            'active'
+        );
+        RAISE NOTICE 'Inserted mortgage for 819helen';
+    END IF;
     
     RAISE NOTICE 'Inserted MHB mortgage records';
 END $$;
 
 -- Insert personal residence
-INSERT INTO per.residence (property_code, address, city, state, zip_code, purchase_date, purchase_price)
-VALUES (
-    'parnell',
-    '1108 Parnell Street',
-    'Sault Ste. Marie',
-    'MI',
-    '49783',
-    '2015-01-16',
-    180000.00
-)
-ON CONFLICT (property_code) DO NOTHING;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM per.residence WHERE property_code = 'parnell') THEN
+        INSERT INTO per.residence (property_code, address, city, state, zip_code, purchase_date, purchase_price)
+        VALUES (
+            'parnell',
+            '1108 Parnell Street',
+            'Sault Ste. Marie',
+            'MI',
+            '49783',
+            '2015-01-16',
+            180000.00
+        );
+        RAISE NOTICE 'Inserted residence for parnell';
+    END IF;
+END $$;
 
 -- Insert personal mortgage
-INSERT INTO per.mortgage (property_code, gl_account_code, lender, issued_on, original_balance, current_balance, interest_rate, matures_on, status)
-VALUES (
-    'parnell',
-    'per:mortgage:parnell',
-    'Central Savings Bank',
-    '2015-01-16',
-    180000.00,
-    180000.00,
-    3.750,
-    '2045-02-01',
-    'active'
-)
-ON CONFLICT DO NOTHING;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM per.mortgage WHERE property_code = 'parnell') THEN
+        INSERT INTO per.mortgage (property_code, gl_account_code, lender, issued_on, original_balance, current_balance, interest_rate, matures_on, status)
+        VALUES (
+            'parnell',
+            'per:mortgage:parnell',
+            'Central Savings Bank',
+            '2015-01-16',
+            180000.00,
+            180000.00,
+            3.750,
+            '2045-02-01',
+            'active'
+        );
+        RAISE NOTICE 'Inserted mortgage for parnell';
+    END IF;
+END $$;
 
 -- ============================================================================
 -- PART 4: DEPRECATION NOTICES
