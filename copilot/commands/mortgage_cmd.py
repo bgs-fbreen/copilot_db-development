@@ -354,7 +354,8 @@ def detect_escrow_type(type_code, amount, trans_date, description):
     if type_code != '710':
         return 'other'
     
-    amount_abs = abs(float(amount))
+    # Use Decimal directly, no float conversion to maintain precision
+    amount_abs = abs(amount)
     month = trans_date.month
     
     # Large amounts in July: property_tax (summer tax)
@@ -419,7 +420,7 @@ def mortgage_import(file, property, dry_run):
     
     # Parse CSV file
     try:
-        with open(file, 'r', encoding='utf-8-sig') as csvfile:
+        with open(file, 'r', encoding='utf-8-sig', newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             rows = list(reader)
     except (FileNotFoundError, csv.Error, UnicodeDecodeError) as e:
