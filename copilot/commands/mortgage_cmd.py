@@ -20,7 +20,6 @@ from decimal import Decimal, InvalidOperation
 import csv
 import psycopg2
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 console = Console()
 
@@ -890,7 +889,9 @@ def print_summary_report(mortgage, projected, actual, stats):
         
         # Status message
         if stats['principal_variance'] > 0:
-            payment_diff = stats['principal_variance'] / (stats['proj_principal'] / stats['payments_made']) if stats['payments_made'] > 0 else 0
+            # Calculate payment difference (avoiding division by zero)
+            avg_payment_principal = stats['proj_principal'] / stats['payments_made'] if stats['payments_made'] > 0 else 0
+            payment_diff = stats['principal_variance'] / avg_payment_principal if avg_payment_principal > 0 else 0
             console.print(f"[bold green]Status: ✓ Ahead of schedule by approximately {int(payment_diff)} payments[/bold green]")
         elif stats['principal_variance'] < 0:
             console.print(f"[bold yellow]Status: ⚠ Behind schedule[/bold yellow]")
