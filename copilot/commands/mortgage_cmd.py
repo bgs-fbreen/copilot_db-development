@@ -38,6 +38,9 @@ ESCROW_INSURANCE_MAX = 1500          # Insurance maximum
 # Allowed entity schemas for SQL injection prevention
 ALLOWED_ENTITIES = {'mhb', 'per'}
 
+# Amortization calculation constants
+BALANCE_THRESHOLD = 0.01  # Minimum balance to continue amortization (cents)
+
 # ============================================================================
 # MAIN COMMAND GROUP
 # ============================================================================
@@ -642,11 +645,17 @@ def calculate_monthly_payment(principal, annual_rate, months):
     return monthly_payment
 
 def add_months_to_date(start_date, months):
-    """Add months to a date, handling month/year rollovers"""
+    """Add months to a date, handling month/year rollovers and day-of-month edge cases"""
+    import calendar
+    
     month = start_date.month - 1 + months
     year = start_date.year + month // 12
     month = month % 12 + 1
-    day = min(start_date.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
+    
+    # Get the last day of the target month
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(start_date.day, last_day)
+    
     return start_date.replace(year=year, month=month, day=day)
 
 @mortgage.command('project')
@@ -729,12 +738,20 @@ def mortgage_project(property_code):
     
     projections = []
     
-    while remaining_balance > 0.01 and payment_date <= mtg['matures_on']:
+    while remaining_balance > BALANCE_THRESHOLD and payment_date <= mtg['matures_on']:
         # Calculate interest for this period
         interest = remaining_balance * monthly_rate
         
-        # Calculate principal
-        principal = min(float(monthly_payment) - interest, remaining_balance)
+        # Calculate principal - ensure we don't go negative
+        principal_payment = float(monthly_payment) - interest
+        
+        # Handle case where interest exceeds payment (negative amortization)
+        if principal_payment <= 0:
+            console.print(f"[red]Error: Monthly payment ${monthly_payment:,.2f} is too small for interest rate {mtg['interest_rate']:.3f}%[/red]")
+            console.print(f"[red]At current balance ${remaining_balance:,.2f}, monthly interest is ${interest:,.2f}[/red]")
+            return
+        
+        principal = min(principal_payment, remaining_balance)
         
         # Adjust for final payment
         if principal >= remaining_balance:
