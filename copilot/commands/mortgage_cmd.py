@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from copilot.db import execute_query, execute_insert, execute_command, get_connection
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import csv
 
 console = Console()
@@ -324,7 +324,7 @@ def parse_csv_amount(amount_str):
     
     try:
         return Decimal(amount_str)
-    except:
+    except (ValueError, InvalidOperation):
         return Decimal('0.00')
 
 def detect_escrow_type(type_code, amount, trans_date, description):
@@ -422,8 +422,8 @@ def mortgage_import(file, property, dry_run):
         WHERE mortgage_id = %s
     """, (mortgage_id,))
     
-    existing_payment_set = {(p['payment_date'], float(p['amount'])) for p in existing_payments}
-    existing_escrow_set = {(e['disbursement_date'], float(e['amount'])) for e in existing_escrow}
+    existing_payment_set = {(p['payment_date'], Decimal(str(p['amount']))) for p in existing_payments}
+    existing_escrow_set = {(e['disbursement_date'], Decimal(str(e['amount']))) for e in existing_escrow}
     
     for row in rows:
         # Parse date
@@ -444,7 +444,7 @@ def mortgage_import(file, property, dry_run):
         # Route based on type code
         if type_code in ('620', '612'):
             # Payment transaction
-            if (effective_date, float(amount)) in existing_payment_set:
+            if (effective_date, amount) in existing_payment_set:
                 duplicates += 1
                 continue
             
@@ -458,11 +458,11 @@ def mortgage_import(file, property, dry_run):
             })
         
         elif type_code in ('710', '716'):
-            # Escrow transaction
-            # CSV amounts are positive, convert to negative for disbursements
-            escrow_amount = -abs(amount)
+            # Escrow transaction - disbursements from escrow account
+            # CSV amounts are positive, store as positive in disbursement table
+            escrow_amount = abs(amount)
             
-            if (effective_date, float(escrow_amount)) in existing_escrow_set:
+            if (effective_date, escrow_amount) in existing_escrow_set:
                 duplicates += 1
                 continue
             
@@ -513,6 +513,8 @@ def mortgage_import(file, property, dry_run):
     console.print(f"\n[bold cyan]Importing mortgage history for {property}...[/bold cyan]")
     console.print("─" * 50)
     
+    conn = None
+    cur = None
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -530,7 +532,7 @@ def mortgage_import(file, property, dry_run):
                 pmt['amount'],
                 pmt['principal'],
                 pmt['interest'],
-                Decimal('0.00'),  # escrow portion in payment
+                Decimal('0.00'),  # escrow portion of payment (0 since escrow tracked separately)
                 pmt['balance'],
                 f"Imported from CSV - {pmt['type']}"
             ))
@@ -548,7 +550,7 @@ def mortgage_import(file, property, dry_run):
                 esc['date'],
                 esc['escrow_type'],
                 'Central Savings Bank',
-                abs(esc['amount']),  # Store as positive amount in database
+                esc['amount'],  # Already positive from processing above
                 esc['description']
             ))
             escrow_count += 1
@@ -574,11 +576,14 @@ def mortgage_import(file, property, dry_run):
         console.print(f"\n[bold green]Import completed successfully![/bold green]")
         
     except Exception as e:
-        conn.rollback()
+        if conn:
+            conn.rollback()
         console.print(f"[red]Error during import: {e}[/red]")
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 # ============================================================================
 # MORTGAGE PROJECT COMMAND (Placeholder)
