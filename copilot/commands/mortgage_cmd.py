@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import csv
 import psycopg2
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 console = Console()
 
@@ -279,19 +281,22 @@ def mortgage_help():
   copilot mortgage project <property>           Generate amortization schedule
   copilot mortgage compare <property>           Compare projected vs actual
 
-[bold]Analysis:[/bold]
+[bold]Analysis & Reporting:[/bold]
+  copilot mortgage report <property>            Generate charts & analysis report
   copilot mortgage whatif <property>            Scenario analysis
     --extra-monthly 100                         Extra monthly payment impact
     --extra-annual 5000                         Annual lump sum impact
     --rate-change 7.5                           Rate change impact
     --cashout 15000                             Refinance cash-out analysis
 
-[bold]Reporting:[/bold]
+[bold]Tax Reporting:[/bold]
   copilot mortgage tax-report --year 2024       Interest paid summary for taxes
 
 [bold]Examples:[/bold]
   copilot mortgage show 711pine
   copilot mortgage list --entity mhb
+  copilot mortgage report parnell
+  copilot mortgage report 819helen
   copilot mortgage whatif parnell --extra-monthly 200
   copilot mortgage tax-report --year 2024
 """
@@ -687,3 +692,327 @@ def mortgage_tax_report(year):
     console.print("- Month-by-month breakdown")
     console.print("- Deductible interest amounts")
     console.print("- Format suitable for Schedule E")
+
+# ============================================================================
+# MORTGAGE REPORT COMMAND - Charts and Analysis
+# ============================================================================
+
+def get_mortgage_details(entity, property_code):
+    """Get mortgage details with property information"""
+    if entity not in ALLOWED_ENTITIES:
+        return None
+    
+    if entity == 'per':
+        query = f"""
+            SELECT 
+                m.id,
+                m.property_code,
+                r.address,
+                r.city,
+                r.state,
+                m.lender,
+                m.loan_number,
+                m.issued_on,
+                m.original_balance,
+                m.current_balance,
+                m.interest_rate,
+                m.monthly_payment,
+                m.matures_on
+            FROM {entity}.mortgage m
+            JOIN {entity}.residence r ON r.property_code = m.property_code
+            WHERE m.property_code = %s AND m.status = 'active'
+        """
+    else:
+        query = f"""
+            SELECT 
+                m.id,
+                m.property_code,
+                p.address,
+                p.city,
+                p.state,
+                m.lender,
+                m.loan_number,
+                m.issued_on,
+                m.original_balance,
+                m.current_balance,
+                m.interest_rate,
+                m.monthly_payment,
+                m.matures_on
+            FROM {entity}.mortgage m
+            JOIN {entity}.property p ON p.code = m.property_code
+            WHERE m.property_code = %s AND m.status = 'active'
+        """
+    
+    result = execute_query(query, (property_code,))
+    return result[0] if result else None
+
+def get_projection_data(entity, mortgage_id):
+    """Get projection data from mortgage_projection table"""
+    if entity not in ALLOWED_ENTITIES:
+        return []
+    
+    query = f"""
+        SELECT 
+            payment_number, 
+            payment_date, 
+            principal, 
+            interest, 
+            balance_after, 
+            cumulative_interest
+        FROM {entity}.mortgage_projection
+        WHERE mortgage_id = %s
+        ORDER BY payment_number
+    """
+    
+    return execute_query(query, (mortgage_id,))
+
+def get_actual_payment_data(entity, mortgage_id):
+    """Get actual payment data from mortgage_payment table"""
+    if entity not in ALLOWED_ENTITIES:
+        return []
+    
+    query = f"""
+        SELECT 
+            payment_date, 
+            principal, 
+            interest, 
+            balance_after
+        FROM {entity}.mortgage_payment
+        WHERE mortgage_id = %s
+        ORDER BY payment_date
+    """
+    
+    return execute_query(query, (mortgage_id,))
+
+def calculate_variance_stats(projected, actual):
+    """Calculate projected vs actual variance statistics"""
+    if not projected or not actual:
+        return None
+    
+    # Match by payment number (assume chronological order)
+    num_actual = len(actual)
+    if num_actual > len(projected):
+        num_actual = len(projected)
+    
+    proj_principal = sum(p['principal'] for p in projected[:num_actual])
+    act_principal = sum(a['principal'] for a in actual[:num_actual])
+    
+    proj_interest = sum(p['interest'] for p in projected[:num_actual])
+    act_interest = sum(a['interest'] for a in actual[:num_actual])
+    
+    proj_balance = projected[num_actual - 1]['balance_after'] if num_actual > 0 else 0
+    act_balance = actual[-1]['balance_after'] if actual else 0
+    
+    return {
+        'payments_made': num_actual,
+        'total_projected_payments': len(projected),
+        'proj_principal': proj_principal,
+        'act_principal': act_principal,
+        'principal_variance': act_principal - proj_principal,
+        'proj_interest': proj_interest,
+        'act_interest': act_interest,
+        'interest_variance': act_interest - proj_interest,
+        'proj_balance': proj_balance,
+        'act_balance': act_balance,
+        'balance_variance': act_balance - proj_balance,
+    }
+
+def print_summary_report(mortgage, projected, actual, stats):
+    """Print terminal summary report using Rich"""
+    property_code = mortgage['property_code']
+    full_address = f"{mortgage['address']}, {mortgage['city']}, {mortgage['state']}"
+    
+    # Header
+    console.print(Panel(
+        f"[bold cyan]Mortgage Report: {property_code}[/bold cyan]",
+        expand=False
+    ))
+    console.print()
+    
+    # Mortgage details
+    console.print(f"[bold]Property:[/bold] {full_address}")
+    console.print(f"[bold]Lender:[/bold] {mortgage['lender']}")
+    console.print(f"[bold]Interest Rate:[/bold] {mortgage['interest_rate']:.3f}%")
+    console.print(f"[bold]Original Balance:[/bold] ${mortgage['original_balance']:,.2f}")
+    console.print(f"[bold]Current Balance:[/bold] ${mortgage['current_balance']:,.2f}")
+    console.print()
+    
+    # Loan progress
+    if stats:
+        principal_paid = mortgage['original_balance'] - mortgage['current_balance']
+        percent_paid = (principal_paid / mortgage['original_balance'] * 100) if mortgage['original_balance'] > 0 else 0
+        
+        console.print("[bold]Loan Progress:[/bold]")
+        console.print(f"  Payments Made: {stats['payments_made']} of {stats['total_projected_payments']}")
+        console.print(f"  Principal Paid: ${principal_paid:,.2f} ({percent_paid:.1f}%)")
+        console.print(f"  Interest Paid: ${stats['act_interest']:,.2f}")
+        console.print(f"  Remaining: ${mortgage['current_balance']:,.2f} ({100-percent_paid:.1f}%)")
+        console.print()
+        
+        # Projected vs Actual Analysis
+        console.print("[bold]Projected vs Actual Analysis:[/bold]")
+        
+        table = Table()
+        table.add_column("Metric", style="cyan")
+        table.add_column("Projected", style="white", justify="right")
+        table.add_column("Actual", style="white", justify="right")
+        table.add_column("Variance", style="yellow", justify="right")
+        
+        # Principal variance
+        principal_var_str = f"[green]+${stats['principal_variance']:,.2f}[/green]" if stats['principal_variance'] > 0 else f"${stats['principal_variance']:,.2f}"
+        table.add_row(
+            "Principal Paid",
+            f"${stats['proj_principal']:,.2f}",
+            f"${stats['act_principal']:,.2f}",
+            principal_var_str
+        )
+        
+        # Interest variance
+        interest_var_str = f"[green]-${abs(stats['interest_variance']):,.2f}[/green]" if stats['interest_variance'] < 0 else f"+${stats['interest_variance']:,.2f}"
+        table.add_row(
+            "Interest Paid",
+            f"${stats['proj_interest']:,.2f}",
+            f"${stats['act_interest']:,.2f}",
+            interest_var_str
+        )
+        
+        # Balance variance
+        balance_var_str = f"[green]-${abs(stats['balance_variance']):,.2f}[/green]" if stats['balance_variance'] < 0 else f"+${stats['balance_variance']:,.2f}"
+        table.add_row(
+            "Current Balance",
+            f"${stats['proj_balance']:,.2f}",
+            f"${stats['act_balance']:,.2f}",
+            balance_var_str
+        )
+        
+        console.print(table)
+        console.print()
+        
+        # Status message
+        if stats['principal_variance'] > 0:
+            payment_diff = stats['principal_variance'] / (stats['proj_principal'] / stats['payments_made']) if stats['payments_made'] > 0 else 0
+            console.print(f"[bold green]Status: ✓ Ahead of schedule by approximately {int(payment_diff)} payments[/bold green]")
+        elif stats['principal_variance'] < 0:
+            console.print(f"[bold yellow]Status: ⚠ Behind schedule[/bold yellow]")
+        else:
+            console.print(f"[bold]Status: ✓ On schedule[/bold]")
+        
+        if stats['interest_variance'] < 0:
+            console.print(f"[bold green]Interest Savings: ${abs(stats['interest_variance']):,.2f}[/bold green]")
+    else:
+        console.print("[yellow]No payment history imported yet[/yellow]")
+    
+    console.print()
+
+def display_charts(mortgage, projected, actual):
+    """Generate and display matplotlib charts"""
+    if not projected:
+        console.print("[yellow]⚠ No projection data available for charts[/yellow]")
+        return
+    
+    # Create figure with 3 subplots (stacked vertically)
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10))
+    
+    property_code = mortgage['property_code']
+    full_address = f"{mortgage['address']}, {mortgage['city']}, {mortgage['state']}"
+    fig.suptitle(f"Mortgage Report: {property_code} - {full_address}", fontsize=16, fontweight='bold')
+    
+    # Extract projected data
+    proj_payment_nums = [p['payment_number'] for p in projected]
+    proj_principal = [float(p['principal']) for p in projected]
+    proj_interest = [float(p['interest']) for p in projected]
+    proj_balance = [float(p['balance_after']) for p in projected]
+    
+    # Extract actual data (match to payment numbers)
+    act_payment_nums = list(range(1, len(actual) + 1))
+    act_principal = [float(a['principal']) for a in actual]
+    act_interest = [float(a['interest']) for a in actual]
+    act_balance = [float(a['balance_after']) for a in actual]
+    
+    # Panel 1: Principal per Payment
+    axes[0].plot(proj_payment_nums, proj_principal, 'b--', label='Projected Principal', linewidth=2)
+    if actual:
+        axes[0].plot(act_payment_nums, act_principal, 'b-', label='Actual Principal', linewidth=2)
+    axes[0].set_xlabel('Payment Number')
+    axes[0].set_ylabel('Principal ($)')
+    axes[0].set_title('Principal per Payment')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # Panel 2: Interest per Payment
+    axes[1].plot(proj_payment_nums, proj_interest, 'r--', label='Projected Interest', linewidth=2)
+    if actual:
+        axes[1].plot(act_payment_nums, act_interest, 'r-', label='Actual Interest', linewidth=2)
+    axes[1].set_xlabel('Payment Number')
+    axes[1].set_ylabel('Interest ($)')
+    axes[1].set_title('Interest per Payment')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    # Panel 3: Remaining Balance
+    axes[2].plot(proj_payment_nums, proj_balance, 'g--', label='Projected Balance', linewidth=2)
+    if actual:
+        axes[2].plot(act_payment_nums, act_balance, 'g-', label='Actual Balance', linewidth=2)
+    axes[2].set_xlabel('Payment Number')
+    axes[2].set_ylabel('Balance ($)')
+    axes[2].set_title('Remaining Balance')
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Try to maximize window (cross-platform)
+    manager = plt.get_current_fig_manager()
+    try:
+        # For TkAgg backend (most common)
+        manager.window.state('zoomed')
+    except:
+        try:
+            # For Qt backend
+            manager.window.showMaximized()
+        except:
+            try:
+                # For other backends
+                manager.full_screen_toggle()
+            except:
+                # If all else fails, just show normally
+                pass
+    
+    plt.show()
+
+@mortgage.command('report')
+@click.argument('property_code')
+def mortgage_report(property_code):
+    """Generate projected vs actual mortgage report with charts"""
+    
+    # 1. Determine entity (per or mhb)
+    entity = 'per' if property_code == 'parnell' else 'mhb'
+    
+    # 2. Get mortgage details
+    mortgage = get_mortgage_details(entity, property_code)
+    
+    if not mortgage:
+        console.print(f"[red]Error: No active mortgage found for property '{property_code}'[/red]")
+        console.print(f"[yellow]Hint: Check property code spelling or use 'copilot mortgage list' to see available mortgages[/yellow]")
+        return
+    
+    # 3. Get projected data from mortgage_projection table
+    projected = get_projection_data(entity, mortgage['id'])
+    
+    # 4. Get actual data from mortgage_payment table
+    actual = get_actual_payment_data(entity, mortgage['id'])
+    
+    # Handle missing projection data
+    if not projected:
+        console.print(f"[yellow]⚠ No projection data found for {property_code}.[/yellow]")
+        console.print(f"[yellow]Run 'copilot mortgage project {property_code}' first to generate amortization schedule.[/yellow]")
+        return
+    
+    # 5. Calculate statistics
+    stats = calculate_variance_stats(projected, actual) if actual else None
+    
+    # 6. Print terminal summary report
+    print_summary_report(mortgage, projected, actual, stats)
+    
+    # 7. Generate and display matplotlib charts
+    display_charts(mortgage, projected, actual)
