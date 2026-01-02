@@ -76,7 +76,20 @@ COMMENT ON COLUMN mhb.mortgage.original_balance IS 'Original principal amount of
 COMMENT ON COLUMN mhb.mortgage.matures_on IS 'Date the mortgage loan matures/is fully paid';
 COMMENT ON COLUMN mhb.mortgage.current_balance IS 'Current principal balance remaining';
 COMMENT ON COLUMN mhb.mortgage.interest_rate IS 'Annual interest rate as percentage (e.g., 3.750)';
-COMMENT ON COLUMN mhb.mortgage.gl_account_code IS 'GL account code (e.g., mhb:mortgage:711pine)';
+
+-- Add comment on gl_account_code if it exists (added by migration 016)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'mhb' 
+        AND table_name = 'mortgage' 
+        AND column_name = 'gl_account_code'
+    ) THEN
+        EXECUTE 'COMMENT ON COLUMN mhb.mortgage.gl_account_code IS ''GL account code (e.g., mhb:mortgage:711pine)''';
+    END IF;
+END $$;
 
 -- ============================================================================
 -- END OF MIGRATION
