@@ -22,6 +22,21 @@ import csv
 console = Console()
 
 # ============================================================================
+# CONSTANTS
+# ============================================================================
+
+# Escrow type detection thresholds (for type 710 transactions)
+ESCROW_PROPERTY_TAX_JULY_MIN = 3000  # Summer tax minimum
+ESCROW_PROPERTY_TAX_JULY_MAX = 5000  # Summer tax maximum
+ESCROW_PROPERTY_TAX_DEC_MIN = 1000   # Winter tax minimum
+ESCROW_PROPERTY_TAX_DEC_MAX = 2000   # Winter tax maximum
+ESCROW_INSURANCE_MIN = 700           # Insurance minimum
+ESCROW_INSURANCE_MAX = 1500          # Insurance maximum
+
+# Allowed entity schemas for SQL injection prevention
+ALLOWED_ENTITIES = {'mhb', 'per'}
+
+# ============================================================================
 # MAIN COMMAND GROUP
 # ============================================================================
 
@@ -341,16 +356,16 @@ def detect_escrow_type(type_code, amount, trans_date, description):
     amount_abs = abs(float(amount))
     month = trans_date.month
     
-    # Large amounts in July ($3000-5000): property_tax (summer tax)
-    if month == 7 and 3000 <= amount_abs <= 5000:
+    # Large amounts in July: property_tax (summer tax)
+    if month == 7 and ESCROW_PROPERTY_TAX_JULY_MIN <= amount_abs <= ESCROW_PROPERTY_TAX_JULY_MAX:
         return 'property_tax'
     
-    # Large amounts in December ($1000-2000): property_tax (winter tax)
-    if month == 12 and 1000 <= amount_abs <= 2000:
+    # Large amounts in December: property_tax (winter tax)
+    if month == 12 and ESCROW_PROPERTY_TAX_DEC_MIN <= amount_abs <= ESCROW_PROPERTY_TAX_DEC_MAX:
         return 'property_tax'
     
-    # Amounts $700-1500 not in Jul/Dec: insurance
-    if 700 <= amount_abs <= 1500 and month not in [7, 12]:
+    # Amounts in insurance range not in Jul/Dec: insurance
+    if ESCROW_INSURANCE_MIN <= amount_abs <= ESCROW_INSURANCE_MAX and month not in [7, 12]:
         return 'insurance'
     
     # Default to other
@@ -363,6 +378,11 @@ def get_entity_and_mortgage(property_code):
     """
     # parnell -> per schema, all others -> mhb schema
     entity = 'per' if property_code == 'parnell' else 'mhb'
+    
+    # Validate entity against whitelist to prevent SQL injection
+    if entity not in ALLOWED_ENTITIES:
+        console.print(f"[red]Error: Invalid entity '{entity}'[/red]")
+        return None, None
     
     query = f"""
         SELECT id, current_balance, interest_rate
@@ -385,8 +405,13 @@ def mortgage_import(file, property, dry_run):
     # Get entity and mortgage record
     entity, mortgage = get_entity_and_mortgage(property)
     
-    if not mortgage:
+    if not mortgage or not entity:
         console.print(f"[red]Error: No active mortgage found for property '{property}'[/red]")
+        return
+    
+    # Additional validation: entity must be in allowed list (defense in depth)
+    if entity not in ALLOWED_ENTITIES:
+        console.print(f"[red]Error: Invalid entity schema '{entity}'[/red]")
         return
     
     mortgage_id = mortgage['id']
