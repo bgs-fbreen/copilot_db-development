@@ -110,7 +110,7 @@ def property_show(property_code):
             p.*,
             m.id as mortgage_id,
             m.lender,
-            m.original_amount as mortgage_original,
+            m.original_balance as mortgage_original,
             m.current_balance as mortgage_balance,
             m.interest_rate as mortgage_rate,
             m.monthly_payment as mortgage_payment

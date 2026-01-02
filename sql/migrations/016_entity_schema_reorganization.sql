@@ -362,7 +362,7 @@ DO $$
 BEGIN
     -- Insert 711 Pine Street mortgage
     IF NOT EXISTS (SELECT 1 FROM mhb.mortgage WHERE property_code = '711pine') THEN
-        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_amount, current_balance, interest_rate, start_date, maturity_date, status)
+        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_balance, current_balance, interest_rate, issued_on, matures_on, status)
         VALUES (
             '711pine',
             'mhb:mortgage:711pine',
@@ -379,7 +379,7 @@ BEGIN
     
     -- Insert 905 Brown Street mortgage
     IF NOT EXISTS (SELECT 1 FROM mhb.mortgage WHERE property_code = '905brown') THEN
-        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_amount, current_balance, interest_rate, start_date, maturity_date, status)
+        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_balance, current_balance, interest_rate, issued_on, matures_on, status)
         VALUES (
             '905brown',
             'mhb:mortgage:905brown',
@@ -396,7 +396,7 @@ BEGIN
     
     -- Insert 819 Helen Street mortgage
     IF NOT EXISTS (SELECT 1 FROM mhb.mortgage WHERE property_code = '819helen') THEN
-        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_amount, current_balance, interest_rate, start_date, maturity_date, status)
+        INSERT INTO mhb.mortgage (property_code, gl_account_code, lender, original_balance, current_balance, interest_rate, issued_on, matures_on, status)
         VALUES (
             '819helen',
             'mhb:mortgage:819helen',
