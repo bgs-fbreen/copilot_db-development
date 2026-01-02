@@ -53,6 +53,8 @@ def help_cmd(show_all):
         # Show module overview
         modules = [
             ("lease", "Rental property and lease management"),
+            ("mortgage", "Mortgage tracking and payment analysis"),
+            ("property", "Property investment analysis and portfolio management"),
             ("allocate", "Transaction allocation and pattern matching"),
             ("gl", "General ledger and accounting"),
             ("staging", "Bank transaction staging and review"),
