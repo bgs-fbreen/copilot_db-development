@@ -38,6 +38,9 @@ ESCROW_INSURANCE_MAX = 1500          # Insurance maximum
 # Allowed entity schemas for SQL injection prevention
 ALLOWED_ENTITIES = {'mhb', 'per'}
 
+# Amortization calculation constants
+BALANCE_THRESHOLD = 0.01  # Minimum balance to continue amortization (cents)
+
 # ============================================================================
 # MAIN COMMAND GROUP
 # ============================================================================
@@ -621,20 +624,209 @@ def mortgage_import(file, property, dry_run):
             conn.close()
 
 # ============================================================================
-# MORTGAGE PROJECT COMMAND (Placeholder)
+# MORTGAGE PROJECT COMMAND
 # ============================================================================
+
+def calculate_monthly_payment(principal, annual_rate, months):
+    """
+    Calculate monthly payment using standard amortization formula
+    M = P * [r(1+r)^n] / [(1+r)^n - 1]
+    """
+    if annual_rate == 0:
+        return principal / months if months > 0 else 0
+    
+    monthly_rate = annual_rate / 12 / 100
+    denominator = ((1 + monthly_rate) ** months) - 1
+    
+    if denominator == 0:
+        return principal / months if months > 0 else 0
+    
+    monthly_payment = principal * (monthly_rate * (1 + monthly_rate) ** months) / denominator
+    return monthly_payment
+
+def add_months_to_date(start_date, months):
+    """Add months to a date, handling month/year rollovers and day-of-month edge cases"""
+    import calendar
+    
+    month = start_date.month - 1 + months
+    year = start_date.year + month // 12
+    month = month % 12 + 1
+    
+    # Get the last day of the target month
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(start_date.day, last_day)
+    
+    return start_date.replace(year=year, month=month, day=day)
 
 @mortgage.command('project')
 @click.argument('property_code')
 def mortgage_project(property_code):
     """Generate amortization schedule projection"""
-    console.print("[yellow]This command is not yet implemented[/yellow]")
-    console.print(f"Would generate projection for: {property_code}")
-    console.print("\nThis will create full amortization schedule showing:")
-    console.print("- Payment number, date, amount")
-    console.print("- Principal and interest breakdown")
-    console.print("- Remaining balance after each payment")
-    console.print("- Cumulative interest paid")
+    
+    # Get entity and mortgage record
+    entity, mortgage = get_entity_and_mortgage(property_code)
+    
+    if not mortgage or not entity:
+        console.print(f"[red]Error: No active mortgage found for property '{property_code}'[/red]")
+        return
+    
+    # Get full mortgage details
+    query = f"""
+        SELECT id, property_code, current_balance, interest_rate, monthly_payment, 
+               issued_on, matures_on
+        FROM {entity}.mortgage 
+        WHERE property_code = %s AND status = 'active'
+    """
+    
+    result = execute_query(query, (property_code,))
+    if not result:
+        console.print(f"[red]Error: Mortgage not found[/red]")
+        return
+    
+    mtg = result[0]
+    
+    # Edge case: Zero balance
+    if mtg['current_balance'] <= 0:
+        console.print(f"[yellow]⚠ Mortgage {property_code} has zero balance. No projection needed.[/yellow]")
+        return
+    
+    # Edge case: Maturity date in the past
+    today = datetime.now().date()
+    if mtg['matures_on'] < today:
+        console.print(f"[yellow]⚠ Mortgage {property_code} maturity date ({mtg['matures_on']}) is in the past.[/yellow]")
+        return
+    
+    # Calculate monthly payment if not set
+    monthly_payment = mtg['monthly_payment']
+    if not monthly_payment or monthly_payment <= 0:
+        # Calculate months until maturity
+        months_until_maturity = (mtg['matures_on'].year - today.year) * 12 + (mtg['matures_on'].month - today.month)
+        if months_until_maturity <= 0:
+            months_until_maturity = 1
+        
+        monthly_payment = calculate_monthly_payment(
+            float(mtg['current_balance']),
+            float(mtg['interest_rate']),
+            months_until_maturity
+        )
+        monthly_payment = Decimal(str(round(monthly_payment, 2)))
+    
+    # Display header
+    console.print(f"\n[bold cyan]Generating amortization schedule for {property_code}...[/bold cyan]")
+    console.print("━" * 50)
+    console.print()
+    
+    # Display mortgage details
+    console.print("[bold]Mortgage Details:[/bold]")
+    console.print(f"  Current Balance: ${mtg['current_balance']:,.2f}")
+    console.print(f"  Interest Rate: {mtg['interest_rate']:.3f}%")
+    console.print(f"  Monthly Payment: ${monthly_payment:,.2f}")
+    console.print(f"  Maturity Date: {mtg['matures_on']}")
+    console.print()
+    
+    # Delete existing projections
+    execute_command(f"DELETE FROM {entity}.mortgage_projection WHERE mortgage_id = %s", (mtg['id'],))
+    
+    # Generate amortization schedule
+    monthly_rate = float(mtg['interest_rate']) / 12 / 100
+    remaining_balance = float(mtg['current_balance'])
+    cumulative_interest = 0.0
+    payment_number = 1
+    
+    # Start from next month
+    payment_date = add_months_to_date(today, 1)
+    
+    projections = []
+    
+    while remaining_balance > BALANCE_THRESHOLD and payment_date <= mtg['matures_on']:
+        # Calculate interest for this period
+        interest = remaining_balance * monthly_rate
+        
+        # Calculate principal - ensure we don't go negative
+        principal_payment = float(monthly_payment) - interest
+        
+        # Handle case where interest exceeds payment (negative amortization)
+        if principal_payment <= 0:
+            console.print(f"[red]Error: Monthly payment ${monthly_payment:,.2f} is too small for interest rate {mtg['interest_rate']:.3f}%[/red]")
+            console.print(f"[red]At current balance ${remaining_balance:,.2f}, monthly interest is ${interest:,.2f}[/red]")
+            return
+        
+        principal = min(principal_payment, remaining_balance)
+        
+        # Adjust for final payment
+        if principal >= remaining_balance:
+            principal = remaining_balance
+            total_payment = principal + interest
+        else:
+            total_payment = float(monthly_payment)
+        
+        # Update running totals
+        remaining_balance -= principal
+        cumulative_interest += interest
+        
+        # Store projection record
+        projections.append({
+            'mortgage_id': mtg['id'],
+            'projection_date': datetime.now(),
+            'payment_number': payment_number,
+            'payment_date': payment_date,
+            'payment_amount': Decimal(str(round(total_payment, 2))),
+            'principal': Decimal(str(round(principal, 2))),
+            'interest': Decimal(str(round(interest, 2))),
+            'balance_after': Decimal(str(round(remaining_balance, 2))),
+            'cumulative_interest': Decimal(str(round(cumulative_interest, 2)))
+        })
+        
+        payment_number += 1
+        payment_date = add_months_to_date(payment_date, 1)
+    
+    # Insert all projections
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        for proj in projections:
+            cur.execute(f"""
+                INSERT INTO {entity}.mortgage_projection 
+                (mortgage_id, projection_date, payment_number, payment_date, 
+                 payment_amount, principal, interest, balance_after, cumulative_interest)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                proj['mortgage_id'],
+                proj['projection_date'],
+                proj['payment_number'],
+                proj['payment_date'],
+                proj['payment_amount'],
+                proj['principal'],
+                proj['interest'],
+                proj['balance_after'],
+                proj['cumulative_interest']
+            ))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        console.print(f"[red]Error inserting projections: {e}[/red]")
+        return
+    finally:
+        cur.close()
+        conn.close()
+    
+    # Calculate totals
+    total_payments = len(projections)
+    first_payment = projections[0]['payment_date'] if projections else None
+    last_payment = projections[-1]['payment_date'] if projections else None
+    total_interest = projections[-1]['cumulative_interest'] if projections else Decimal('0.00')
+    total_amount = sum(p['payment_amount'] for p in projections)
+    
+    # Display summary
+    console.print("[bold]Projection Generated:[/bold]")
+    console.print(f"  Total Payments: {total_payments}")
+    console.print(f"  First Payment: {first_payment}")
+    console.print(f"  Last Payment: {last_payment}")
+    console.print(f"  Total Interest: ${total_interest:,.2f}")
+    console.print(f"  Total Amount: ${total_amount:,.2f}")
+    console.print()
+    console.print(f"[green]✓ Projection saved to database[/green]")
+    console.print(f"Run 'copilot mortgage report {property_code}' to view charts")
 
 # ============================================================================
 # MORTGAGE COMPARE COMMAND (Placeholder)
