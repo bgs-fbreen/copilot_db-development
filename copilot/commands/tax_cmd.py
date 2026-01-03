@@ -13,7 +13,7 @@ import csv
 from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
-from copilot.db import execute_query, execute_insert, execute_command, get_connection
+from copilot.db import execute_query, get_connection
 from copilot.commands.help_utils import print_header, print_section, print_examples
 from datetime import datetime
 from decimal import Decimal
@@ -78,14 +78,26 @@ def tax_import(file, property, schema):
             imported = 0
             errors = 0
             
-            # Note: We commit each row individually to allow partial imports.
-            # If one bill fails, others will still be imported successfully.
+            # Note: Each tax bill (including its millage details) is committed as a single 
+            # transaction unit. This allows partial imports - if one bill fails, others 
+            # will still be imported successfully.
             try:
                 for row in rows:
                     try:
                         # Parse basic bill data
                         tax_year = int(row['tax_year'])
                         tax_season = row['tax_season'].lower()
+                        
+                        # Convert PRE percentage (handle both whole number and decimal formats)
+                        pre_pct = None
+                        if row.get('pre_pct'):
+                            pre_val = float(row['pre_pct'])
+                            # If value is > 1, assume it's a whole number (e.g., 18.00 for 18%)
+                            # If value is <= 1, assume it's already in decimal format (e.g., 0.18)
+                            pre_pct = pre_val / 100.0 if pre_val > 1 else pre_val
+                            # Validate range
+                            if pre_pct < 0 or pre_pct > 1:
+                                raise ValueError(f"PRE percentage out of range: {row['pre_pct']}")
                         
                         # Insert or update tax bill
                         bill_query = f"""
@@ -119,7 +131,7 @@ def tax_import(file, property, schema):
                                 tax_season,
                                 row.get('school_district'),
                                 row.get('property_class'),
-                                float(row['pre_pct']) / 100.0 if row.get('pre_pct') else None,
+                                pre_pct,
                                 float(row['assessed_value']) if row.get('assessed_value') else None,
                                 float(row['taxable_value']) if row.get('taxable_value') else None,
                                 float(row['total_millage']) if row.get('total_millage') else None,
