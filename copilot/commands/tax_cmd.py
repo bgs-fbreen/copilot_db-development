@@ -361,7 +361,7 @@ def _find_pre_exemption_lost_year(results):
     return None
 
 def _draw_ascii_chart(values, labels, prefix='', height=8, width=60):
-    """Draw a simple ASCII bar chart"""
+    """Draw a simple ASCII bar chart with properly aligned x-axis labels"""
     
     # Filter out None values
     valid_data = [(v, l) for v, l in zip(values, labels) if v is not None]
@@ -379,35 +379,46 @@ def _draw_ascii_chart(values, labels, prefix='', height=8, width=60):
     if val_range == 0:
         val_range = max_val if max_val > 0 else 1  # Prevent division by zero
     
+    # Fixed column width: 4 chars for bar + 3 chars spacing = 7 chars per column
+    col_width = 7
+    bar_char = "████"
+    
+    # Y-axis label width (for alignment): prefix (1) + value (7) + " |" (2) = 10 chars
+    y_label_width = 10
+    
     # Generate Y-axis labels
     y_labels = []
     for i in range(height):
         val = max_val - (i * val_range / (height - 1))
         y_labels.append(f"{prefix}{val:>7,.0f}")
     
-    # Draw chart
-    bar_width = max(1, width // len(values))
-    
+    # Draw chart rows
     for i in range(height):
         threshold = max_val - (i * val_range / (height - 1))
         line = y_labels[i] + " |"
         
         for val in values:
             if val >= threshold:
-                line += "████".ljust(bar_width)
+                line += f" {bar_char}  "  # 1 space + 4 bar + 2 space = 7 chars
             else:
-                line += " " * bar_width
+                line += " " * col_width
         
         console.print(line)
     
-    # Draw X-axis
-    console.print(" " * 9 + "└" + "─" * (bar_width * len(values)))
+    # Draw X-axis line (extra +1 for the initial space in label line below)
+    x_axis_line = "─" * (len(labels) * col_width + 1)
+    console.print(f"{' ' * y_label_width}└{x_axis_line}")
     
-    # Draw X-axis labels
-    label_line = " " * 14
-    for i, label in enumerate(labels):
-        label_line += str(label).center(bar_width)
-    console.print(label_line)
+    # Draw X-axis labels (aligned with each column)
+    label_line = " "  # Initial space after └
+    for label in labels:
+        # Center label in column width, padding with spaces
+        label_str = str(label)
+        padding_total = col_width - len(label_str)
+        padding_left = padding_total // 2
+        padding_right = padding_total - padding_left
+        label_line += " " * padding_left + label_str + " " * padding_right
+    console.print(f"{' ' * y_label_width}{label_line}")
 
 # ============================================================================
 # EXPORT COMMAND
