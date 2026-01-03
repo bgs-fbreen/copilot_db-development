@@ -1104,7 +1104,18 @@ def print_summary_report(mortgage, projected, actual, stats):
     console.print()
 
 def insert_gaps_for_missing_data(dates, values, max_gap_days=45):
-    """Insert NaN values where there are gaps > max_gap_days to break the line."""
+    """
+    Insert NaN values where there are gaps > max_gap_days to break the line.
+    
+    Args:
+        dates: List of payment dates
+        values: List of corresponding values (or list of value lists for multiple series)
+        max_gap_days: Maximum days between payments before inserting a gap (default: 45)
+    
+    Returns:
+        Tuple of (new_dates, new_values) with NaN inserted at gap positions.
+        The gap is inserted 1 day after the last valid point to break the line visually.
+    """
     if len(dates) < 2:
         return dates, values
     
@@ -1119,7 +1130,8 @@ def insert_gaps_for_missing_data(dates, values, max_gap_days=45):
         if i < len(dates) - 1:
             gap = (dates[i+1] - dates[i]).days
             if gap > max_gap_days:
-                # Insert NaN to break the line
+                # Insert NaN 1 day after last valid point to break the line
+                # The 1-day offset ensures matplotlib breaks the line visually
                 new_dates.append(dates[i] + timedelta(days=1))
                 new_values.append(np.nan)
     
