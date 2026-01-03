@@ -524,7 +524,7 @@ ORDER BY tax_year;
 
 ## Current Status Summary
 
-### All Properties Overview (as of 2026)
+### All Properties Overview (Example)
 
 ```
 ┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
@@ -698,5 +698,5 @@ copilot tax priority --help
 - Command source: `copilot/commands/tax_cmd.py`
 
 **Get support:**
-- Check repository issues: https://github.com/bgs-fbreen/copilot_db-development/issues
+- Check repository issues on GitHub
 - Review database logs: `tail -f /var/log/postgresql/postgresql-*.log`

@@ -43,7 +43,7 @@ Under Proposal A, taxable value increases are limited to the lesser of:
 - Inflation rate (CPI)
 - 5% per year
 
-When a property is sold or transferred, taxable value "uncaps" and resets to SEV.
+When a property is sold or transferred, taxable value becomes uncapped and resets to SEV.
 
 ### Principal Residence Exemption (PRE)
 
@@ -304,10 +304,10 @@ SET total_paid = (SELECT COALESCE(SUM(amount), 0)
         WHEN total_paid > 0 THEN 'partial'
         ELSE 'unpaid'
     END
-WHERE id = [bill_id];
+WHERE id = 123; -- Replace with actual bill ID
 ```
 
-## Current Tax Situation (2026)
+## Current Tax Situation
 
 ### Summary by Property
 
@@ -431,7 +431,7 @@ Recent bills (1 year old or less):
 ### Strategy Notes
 
 - **Always pay oldest bills first** to avoid foreclosure
-- **Personal residence (parnell)** has lowest priority as it's our primary residence and has PRE exemption
+- **Personal residence (parnell)** generally has lower effective tax rates due to PRE exemption, but foreclosure risk bills should still be prioritized
 - **Partial payments** are acceptable - pay what you can toward oldest bills
 - **Contact county treasurer** if unable to pay - payment plans may be available
 
