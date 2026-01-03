@@ -1,5 +1,10 @@
 # Refinance Analysis Report
 ## MHB Rental Properties Portfolio
+# Mortgage Portfolio Refinance Analysis Report
+
+**Prepared:** January 3, 2026  
+**Prepared For:** Frank Breen  
+**Properties:** 711pine, 819helen, 905brown (MHB Properties LLC), parnell (Personal)
 
 ---
 
