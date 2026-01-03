@@ -938,7 +938,7 @@ def mortgage_project(property_code):
     
     # Edge case: Zero balance
     if mtg['current_balance'] <= 0:
-        console.print(f"[yellow]⚠ Mortgage {property_code} has zero balance. No projection needed.[/yellow]")
+        console.print(f"[yellow]⚠ Mortgage {property_code} has zero current balance. No projection needed.[/yellow]")
         return
     
     # Edge case: Maturity date in the past
@@ -965,6 +965,11 @@ def mortgage_project(property_code):
     # This ensures we don't overcount when today is later in the month
     if today.day > mtg['matures_on'].day:
         remaining_months -= 1
+    
+    # Ensure we have at least some remaining term
+    if remaining_months <= 0:
+        console.print(f"[yellow]⚠ Mortgage {property_code} has reached or passed maturity date ({mtg['matures_on']}).[/yellow]")
+        return
     if remaining_months <= 0:
         console.print(f"[yellow]⚠ Mortgage {property_code} has reached maturity.[/yellow]")
         return
@@ -1001,6 +1006,9 @@ def mortgage_project(property_code):
     payment_number = 1
     
     # Start from first payment date (first of next month)
+    # Note: We use first of month for consistency in projections
+    # This provides a standardized forward-looking schedule regardless of when
+    # the projection is generated. Actual payment dates may vary.
     payment_date = add_months_to_date(today, 1)
     # Adjust to first of month
     payment_date = payment_date.replace(day=1)
