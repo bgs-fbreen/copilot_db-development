@@ -599,16 +599,19 @@ def mortgage_import(file, property, dry_run):
             # Parse the new rate from the Amount field
             rate_amount = parse_csv_amount(row.get('Amount', ''))
             
-            # Convert decimal to percentage if needed (0.0825 -> 8.25)
-            if rate_amount < 1:
-                new_rate = float(rate_amount) * 100
+            # Convert decimal to percentage if needed
+            # Bank CSV uses decimal format (0.0825 = 8.25%)
+            # Threshold of 1.0 works because real interest rates are typically > 1%
+            # and CSV decimals are < 1 (e.g., 0.0825, 0.0975)
+            if rate_amount < Decimal('1'):
+                new_rate = rate_amount * Decimal('100')
             else:
-                new_rate = float(rate_amount)
+                new_rate = rate_amount
             
             # Store rate change for later insertion
             rate_changes_to_import.append({
                 'date': effective_date,
-                'rate': Decimal(str(round(new_rate, 4))),
+                'rate': new_rate.quantize(Decimal('0.0001')),  # 4 decimal places
                 'type': type_field
             })
             continue
@@ -865,9 +868,14 @@ def get_current_rate(entity, mortgage_id):
         ORDER BY effective_date DESC
         LIMIT 1
     """
-    result = execute_query(query, (mortgage_id,))
-    if result:
-        return float(result[0]['interest_rate'])
+    
+    try:
+        result = execute_query(query, (mortgage_id,))
+        if result and result[0].get('interest_rate') is not None:
+            return float(result[0]['interest_rate'])
+    except (ValueError, TypeError, KeyError) as e:
+        console.print(f"[yellow]Warning: Could not parse rate from history: {e}[/yellow]")
+    
     return None
 
 def calculate_monthly_payment(principal, annual_rate, months):
@@ -949,7 +957,14 @@ def mortgage_project(property_code):
         rate_source = "from mortgage record"
     
     # Calculate remaining term from today to maturity
+    # Use a more accurate calculation that considers the day of the month
+    # For mortgage projections, we count complete months
     remaining_months = (mtg['matures_on'].year - today.year) * 12 + (mtg['matures_on'].month - today.month)
+    
+    # If we're past the day of month for the maturity date, subtract one month
+    # This ensures we don't overcount when today is later in the month
+    if today.day > mtg['matures_on'].day:
+        remaining_months -= 1
     if remaining_months <= 0:
         console.print(f"[yellow]⚠ Mortgage {property_code} has reached maturity.[/yellow]")
         return
