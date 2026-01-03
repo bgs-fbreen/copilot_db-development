@@ -20,6 +20,7 @@ from decimal import Decimal, InvalidOperation
 import csv
 import psycopg2
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 console = Console()
 
@@ -672,7 +673,7 @@ def mortgage_project(property_code):
     
     # Get full mortgage details
     query = f"""
-        SELECT id, property_code, current_balance, interest_rate, monthly_payment, 
+        SELECT id, property_code, original_balance, current_balance, interest_rate, monthly_payment, 
                issued_on, matures_on
         FROM {entity}.mortgage 
         WHERE property_code = %s AND status = 'active'
@@ -686,7 +687,7 @@ def mortgage_project(property_code):
     mtg = result[0]
     
     # Edge case: Zero balance
-    if mtg['current_balance'] <= 0:
+    if mtg['original_balance'] <= 0:
         console.print(f"[yellow]⚠ Mortgage {property_code} has zero balance. No projection needed.[/yellow]")
         return
     
@@ -699,13 +700,14 @@ def mortgage_project(property_code):
     # Calculate monthly payment if not set
     monthly_payment = mtg['monthly_payment']
     if not monthly_payment or monthly_payment <= 0:
-        # Calculate months until maturity
-        months_until_maturity = (mtg['matures_on'].year - today.year) * 12 + (mtg['matures_on'].month - today.month)
+        # Calculate months until maturity from issued_on date
+        issued_on = mtg['issued_on']
+        months_until_maturity = (mtg['matures_on'].year - issued_on.year) * 12 + (mtg['matures_on'].month - issued_on.month)
         if months_until_maturity <= 0:
             months_until_maturity = 1
         
         monthly_payment = calculate_monthly_payment(
-            float(mtg['current_balance']),
+            float(mtg['original_balance']),
             float(mtg['interest_rate']),
             months_until_maturity
         )
@@ -718,9 +720,10 @@ def mortgage_project(property_code):
     
     # Display mortgage details
     console.print("[bold]Mortgage Details:[/bold]")
-    console.print(f"  Current Balance: ${mtg['current_balance']:,.2f}")
+    console.print(f"  Original Balance: ${mtg['original_balance']:,.2f}")
     console.print(f"  Interest Rate: {mtg['interest_rate']:.3f}%")
     console.print(f"  Monthly Payment: ${monthly_payment:,.2f}")
+    console.print(f"  Issued: {mtg['issued_on']}")
     console.print(f"  Maturity Date: {mtg['matures_on']}")
     console.print()
     
@@ -729,12 +732,13 @@ def mortgage_project(property_code):
     
     # Generate amortization schedule
     monthly_rate = float(mtg['interest_rate']) / 12 / 100
-    remaining_balance = float(mtg['current_balance'])
+    remaining_balance = float(mtg['original_balance'])
     cumulative_interest = 0.0
     payment_number = 1
     
-    # Start from next month
-    payment_date = add_months_to_date(today, 1)
+    # Start from first payment date (month after issued_on)
+    issued_on = mtg['issued_on']
+    payment_date = add_months_to_date(issued_on, 1)
     
     projections = []
     
@@ -970,6 +974,7 @@ def get_actual_payment_data(entity, mortgage_id):
             balance_after
         FROM {entity}.mortgage_payment
         WHERE mortgage_id = %s
+          AND (principal != 0 OR interest != 0)
         ORDER BY payment_date
     """
     
@@ -1103,54 +1108,63 @@ def display_charts(mortgage, projected, actual):
         console.print("[yellow]⚠ No projection data available for charts[/yellow]")
         return
     
-    # Create figure with 3 subplots (stacked vertically)
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10))
+    # Create figure with 3 subplots (stacked vertically) - 10% smaller
+    fig, axes = plt.subplots(3, 1, figsize=(12.6, 9))
     
     property_code = mortgage['property_code']
     full_address = f"{mortgage['address']}, {mortgage['city']}, {mortgage['state']}"
     fig.suptitle(f"Mortgage Report: {property_code} - {full_address}", fontsize=16, fontweight='bold')
     
-    # Extract projected data
-    proj_payment_nums = [p['payment_number'] for p in projected]
+    # Extract projected data - use dates for X-axis
+    proj_dates = [p['payment_date'] for p in projected]
     proj_principal = [float(p['principal']) for p in projected]
     proj_interest = [float(p['interest']) for p in projected]
     proj_balance = [float(p['balance_after']) for p in projected]
     
-    # Extract actual data (match to payment numbers)
-    act_payment_nums = list(range(1, len(actual) + 1))
+    # Extract actual data - use dates for X-axis
+    act_dates = [a['payment_date'] for a in actual]
     act_principal = [float(a['principal']) for a in actual]
     act_interest = [float(a['interest']) for a in actual]
     act_balance = [float(a['balance_after']) for a in actual]
     
     # Panel 1: Principal per Payment
-    axes[0].plot(proj_payment_nums, proj_principal, 'b--', label='Projected Principal', linewidth=2)
+    axes[0].plot(proj_dates, proj_principal, 'b--', label='Projected Principal', linewidth=2)
     if actual:
-        axes[0].plot(act_payment_nums, act_principal, 'b-', label='Actual Principal', linewidth=2)
-    axes[0].set_xlabel('Payment Number')
+        axes[0].plot(act_dates, act_principal, 'b-', label='Actual Principal', linewidth=2)
+    axes[0].set_xlabel('Date')
     axes[0].set_ylabel('Principal ($)')
     axes[0].set_title('Principal per Payment')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
+    # Format X-axis as dates
+    axes[0].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    axes[0].xaxis.set_major_locator(mdates.YearLocator(2))  # Every 2 years
     
     # Panel 2: Interest per Payment
-    axes[1].plot(proj_payment_nums, proj_interest, 'r--', label='Projected Interest', linewidth=2)
+    axes[1].plot(proj_dates, proj_interest, 'r--', label='Projected Interest', linewidth=2)
     if actual:
-        axes[1].plot(act_payment_nums, act_interest, 'r-', label='Actual Interest', linewidth=2)
-    axes[1].set_xlabel('Payment Number')
+        axes[1].plot(act_dates, act_interest, 'r-', label='Actual Interest', linewidth=2)
+    axes[1].set_xlabel('Date')
     axes[1].set_ylabel('Interest ($)')
     axes[1].set_title('Interest per Payment')
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
+    # Format X-axis as dates
+    axes[1].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    axes[1].xaxis.set_major_locator(mdates.YearLocator(2))  # Every 2 years
     
     # Panel 3: Remaining Balance
-    axes[2].plot(proj_payment_nums, proj_balance, 'g--', label='Projected Balance', linewidth=2)
+    axes[2].plot(proj_dates, proj_balance, 'g--', label='Projected Balance', linewidth=2)
     if actual:
-        axes[2].plot(act_payment_nums, act_balance, 'g-', label='Actual Balance', linewidth=2)
-    axes[2].set_xlabel('Payment Number')
+        axes[2].plot(act_dates, act_balance, 'g-', label='Actual Balance', linewidth=2)
+    axes[2].set_xlabel('Date')
     axes[2].set_ylabel('Balance ($)')
     axes[2].set_title('Remaining Balance')
     axes[2].legend()
     axes[2].grid(True, alpha=0.3)
+    # Format X-axis as dates
+    axes[2].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    axes[2].xaxis.set_major_locator(mdates.YearLocator(2))  # Every 2 years
     
     plt.tight_layout()
     
