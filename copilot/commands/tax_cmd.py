@@ -383,8 +383,8 @@ def _draw_ascii_chart(values, labels, prefix='', height=8, width=60):
     col_width = 7
     bar_char = "████"
     
-    # Y-axis label width (for alignment)
-    y_label_width = 9  # "$ XX,XXX |"
+    # Y-axis label width (for alignment): prefix (1) + value (7) + " |" (2) = 10 chars
+    y_label_width = 10
     
     # Generate Y-axis labels
     y_labels = []
@@ -405,14 +405,19 @@ def _draw_ascii_chart(values, labels, prefix='', height=8, width=60):
         
         console.print(line)
     
-    # Draw X-axis line
+    # Draw X-axis line (extra +1 for the initial space in label line below)
     x_axis_line = "─" * (len(labels) * col_width + 1)
     console.print(f"{' ' * y_label_width}└{x_axis_line}")
     
     # Draw X-axis labels (aligned with each column)
     label_line = " "  # Initial space after └
     for label in labels:
-        label_line += f" {str(label)}  "  # 1 space + 4 year + 2 space = 7 chars
+        # Center label in column width, padding with spaces
+        label_str = str(label)
+        padding_total = col_width - len(label_str)
+        padding_left = padding_total // 2
+        padding_right = padding_total - padding_left
+        label_line += " " * padding_left + label_str + " " * padding_right
     console.print(f"{' ' * y_label_width}{label_line}")
 
 # ============================================================================
