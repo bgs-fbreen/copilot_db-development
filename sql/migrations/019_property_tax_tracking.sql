@@ -223,40 +223,41 @@ CREATE INDEX IF NOT EXISTS idx_mhb_tax_payment_date ON mhb.property_tax_payment(
 
 CREATE OR REPLACE FUNCTION per.fn_update_tax_bill_on_payment()
 RETURNS TRIGGER AS $$
+DECLARE
+    v_bill_id INTEGER;
+    v_total_paid NUMERIC(10,2);
+    v_interest_paid NUMERIC(10,2);
+    v_total_due NUMERIC(10,2);
 BEGIN
+    -- Get the bill ID from the payment record
+    v_bill_id := COALESCE(NEW.tax_bill_id, OLD.tax_bill_id);
+    
+    -- Calculate totals once
+    SELECT 
+        COALESCE(SUM(amount), 0),
+        COALESCE(SUM(interest_amount), 0)
+    INTO v_total_paid, v_interest_paid
+    FROM per.property_tax_payment 
+    WHERE tax_bill_id = v_bill_id;
+    
+    -- Get total due for status calculation
+    SELECT total_due INTO v_total_due
+    FROM per.property_tax_bill
+    WHERE id = v_bill_id;
+    
     -- Update the tax bill totals
     UPDATE per.property_tax_bill
     SET 
-        total_paid = (
-            SELECT COALESCE(SUM(amount), 0) 
-            FROM per.property_tax_payment 
-            WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-        ),
-        interest_paid = (
-            SELECT COALESCE(SUM(interest_amount), 0) 
-            FROM per.property_tax_payment 
-            WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-        ),
-        balance_due = total_due - (
-            SELECT COALESCE(SUM(amount), 0) 
-            FROM per.property_tax_payment 
-            WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-        ),
+        total_paid = v_total_paid,
+        interest_paid = v_interest_paid,
+        balance_due = v_total_due - v_total_paid,
         status = CASE 
-            WHEN total_due <= (
-                SELECT COALESCE(SUM(amount), 0) 
-                FROM per.property_tax_payment 
-                WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-            ) THEN 'paid'
-            WHEN (
-                SELECT COALESCE(SUM(amount), 0) 
-                FROM per.property_tax_payment 
-                WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-            ) > 0 THEN 'partial'
+            WHEN v_total_due <= v_total_paid THEN 'paid'
+            WHEN v_total_paid > 0 THEN 'partial'
             ELSE 'unpaid'
         END,
         updated_at = NOW()
-    WHERE id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id);
+    WHERE id = v_bill_id;
     
     RETURN COALESCE(NEW, OLD);
 END;
@@ -275,40 +276,41 @@ CREATE TRIGGER trg_update_tax_bill_on_payment
 
 CREATE OR REPLACE FUNCTION mhb.fn_update_tax_bill_on_payment()
 RETURNS TRIGGER AS $$
+DECLARE
+    v_bill_id INTEGER;
+    v_total_paid NUMERIC(10,2);
+    v_interest_paid NUMERIC(10,2);
+    v_total_due NUMERIC(10,2);
 BEGIN
+    -- Get the bill ID from the payment record
+    v_bill_id := COALESCE(NEW.tax_bill_id, OLD.tax_bill_id);
+    
+    -- Calculate totals once
+    SELECT 
+        COALESCE(SUM(amount), 0),
+        COALESCE(SUM(interest_amount), 0)
+    INTO v_total_paid, v_interest_paid
+    FROM mhb.property_tax_payment 
+    WHERE tax_bill_id = v_bill_id;
+    
+    -- Get total due for status calculation
+    SELECT total_due INTO v_total_due
+    FROM mhb.property_tax_bill
+    WHERE id = v_bill_id;
+    
     -- Update the tax bill totals
     UPDATE mhb.property_tax_bill
     SET 
-        total_paid = (
-            SELECT COALESCE(SUM(amount), 0) 
-            FROM mhb.property_tax_payment 
-            WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-        ),
-        interest_paid = (
-            SELECT COALESCE(SUM(interest_amount), 0) 
-            FROM mhb.property_tax_payment 
-            WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-        ),
-        balance_due = total_due - (
-            SELECT COALESCE(SUM(amount), 0) 
-            FROM mhb.property_tax_payment 
-            WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-        ),
+        total_paid = v_total_paid,
+        interest_paid = v_interest_paid,
+        balance_due = v_total_due - v_total_paid,
         status = CASE 
-            WHEN total_due <= (
-                SELECT COALESCE(SUM(amount), 0) 
-                FROM mhb.property_tax_payment 
-                WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-            ) THEN 'paid'
-            WHEN (
-                SELECT COALESCE(SUM(amount), 0) 
-                FROM mhb.property_tax_payment 
-                WHERE tax_bill_id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id)
-            ) > 0 THEN 'partial'
+            WHEN v_total_due <= v_total_paid THEN 'paid'
+            WHEN v_total_paid > 0 THEN 'partial'
             ELSE 'unpaid'
         END,
         updated_at = NOW()
-    WHERE id = COALESCE(NEW.tax_bill_id, OLD.tax_bill_id);
+    WHERE id = v_bill_id;
     
     RETURN COALESCE(NEW, OLD);
 END;

@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from copilot.db import execute_query, execute_insert, execute_command, get_connection
+from copilot.commands.help_utils import print_header, print_section, print_examples
 from datetime import datetime
 from decimal import Decimal
 
@@ -45,7 +46,7 @@ def tax_import(file, property, schema):
     - tax_season: summer or winter
     - school_district: School district code
     - property_class: Property class (e.g., 401 for residential)
-    - pre_pct: Principal Residence Exemption % (e.g., 18.00)
+    - pre_pct: Principal Residence Exemption % as whole number (e.g., 18.00 for 18%)
     - assessed_value: SEV
     - taxable_value: Taxable value
     - total_millage: Total millage rate
@@ -58,6 +59,9 @@ def tax_import(file, property, schema):
     Optional millage detail columns (prefix with 'millage_'):
     - millage_<authority>: Amount for each taxing authority
     - rate_<authority>: Millage rate for each authority
+    
+    NOTE: pre_pct should be provided as a whole number (e.g., 18.00 for 18%). 
+    The import process will automatically convert it to decimal format (0.18).
     """
     try:
         with open(file, 'r') as csvfile:
@@ -74,6 +78,8 @@ def tax_import(file, property, schema):
             imported = 0
             errors = 0
             
+            # Note: We commit each row individually to allow partial imports.
+            # If one bill fails, others will still be imported successfully.
             try:
                 for row in rows:
                     try:
@@ -650,8 +656,6 @@ def tax_summary(year, schema):
 @tax.command('help')
 def help_command():
     """Display comprehensive tax management help"""
-    from copilot.commands.help_utils import print_header, print_section, print_examples
-    
     print_header("PROPERTY TAX MANAGEMENT")
     
     # Import/Export
