@@ -1,334 +1,119 @@
 -- ============================================================================
 -- Migration: Create Property Tax Tracking System
 -- Created: 2026-01-03
--- Description: Creates comprehensive property tax tracking system including:
---              - Tax bills with assessment information
---              - Millage breakdown details per taxing authority
---              - Payment history with interest/penalty tracking
---              - Automatic balance updates via triggers
---              - Views for outstanding balances and tax history
+-- Description: Creates comprehensive property tax tracking system for rental
+--              properties (905brown, 711pine, 819helen) including:
+--              - Tax bill tracking with assessment values
+--              - Payment history with partial payment support
+--              - Foreclosure risk analysis (3+ years delinquent)
+--              - Payment priority recommendations
+--              - Assessment and tax trend analysis
 -- ============================================================================
 
 -- ============================================================================
--- PER.PROPERTY_TAX_BILL - Personal property tax bills
+-- PROPERTY_TAX_BILL - Tax bills for rental properties
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS per.property_tax_bill (
+CREATE TABLE IF NOT EXISTS acc.property_tax_bill (
     id SERIAL PRIMARY KEY,
     property_code VARCHAR(50) NOT NULL,
     tax_year INTEGER NOT NULL,
-    tax_season VARCHAR(10) NOT NULL,  -- 'summer' or 'winter'
-    
-    -- Assessment Info
-    school_district VARCHAR(20),
-    property_class VARCHAR(20),       -- '401' = residential
-    pre_pct NUMERIC(7,4),             -- Principal Residence Exemption %
-    assessed_value NUMERIC(12,2),     -- SEV
+    tax_season VARCHAR(20) NOT NULL,
+    assessed_value NUMERIC(12,2),
     taxable_value NUMERIC(12,2),
-    
-    -- Bill Amounts
-    total_millage NUMERIC(10,6),
-    base_tax NUMERIC(10,2) NOT NULL,
-    admin_fee NUMERIC(10,2) DEFAULT 0,
-    total_due NUMERIC(10,2) NOT NULL,
-    
-    -- Due Date & Status
+    pre_pct NUMERIC(5,2) DEFAULT 0,
+    millage_rate NUMERIC(8,4),
+    total_due NUMERIC(12,2) NOT NULL,
+    total_paid NUMERIC(12,2) DEFAULT 0,
+    balance_due NUMERIC(12,2) NOT NULL,
     due_date DATE,
-    
-    -- Payment Tracking (updated by triggers)
-    total_paid NUMERIC(10,2) DEFAULT 0,
-    interest_paid NUMERIC(10,2) DEFAULT 0,
-    balance_due NUMERIC(10,2),  -- Calculated as total_due - total_paid
-    status VARCHAR(20) DEFAULT 'unpaid',  -- 'unpaid', 'partial', 'paid', 'delinquent'
-    
-    -- Metadata
-    bill_number VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    
-    UNIQUE(property_code, tax_year, tax_season),
-    CONSTRAINT chk_per_tax_season CHECK (tax_season IN ('summer', 'winter')),
-    CONSTRAINT chk_per_tax_status CHECK (status IN ('unpaid', 'partial', 'paid', 'delinquent'))
-);
-
-COMMENT ON TABLE per.property_tax_bill IS 'Personal property tax bills with assessment and payment tracking';
-COMMENT ON COLUMN per.property_tax_bill.tax_season IS 'summer or winter billing cycle';
-COMMENT ON COLUMN per.property_tax_bill.property_class IS '401 = residential, etc.';
-COMMENT ON COLUMN per.property_tax_bill.pre_pct IS 'Principal Residence Exemption percentage (e.g., 0.1800 for 18%)';
-COMMENT ON COLUMN per.property_tax_bill.total_millage IS 'Total millage rate applied';
-COMMENT ON COLUMN per.property_tax_bill.balance_due IS 'Automatically calculated: total_due - total_paid';
-
-CREATE INDEX IF NOT EXISTS idx_per_tax_bill_property ON per.property_tax_bill(property_code);
-CREATE INDEX IF NOT EXISTS idx_per_tax_bill_year ON per.property_tax_bill(tax_year);
-CREATE INDEX IF NOT EXISTS idx_per_tax_bill_status ON per.property_tax_bill(status);
-
--- ============================================================================
--- PER.PROPERTY_TAX_DETAIL - Personal property tax millage breakdown
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS per.property_tax_detail (
-    id SERIAL PRIMARY KEY,
-    tax_bill_id INTEGER NOT NULL REFERENCES per.property_tax_bill(id) ON DELETE CASCADE,
-    
-    taxing_authority VARCHAR(100) NOT NULL,  -- 'STATE ED', 'CITY OPERATING', etc.
-    millage_rate NUMERIC(10,6) NOT NULL,
-    amount NUMERIC(10,2) NOT NULL,
-    amount_paid NUMERIC(10,2) DEFAULT 0,
-    
-    UNIQUE(tax_bill_id, taxing_authority)
-);
-
-COMMENT ON TABLE per.property_tax_detail IS 'Millage breakdown by taxing authority for each tax bill';
-COMMENT ON COLUMN per.property_tax_detail.taxing_authority IS 'Tax authority name (STATE ED, CITY OPERATING, etc.)';
-COMMENT ON COLUMN per.property_tax_detail.millage_rate IS 'Millage rate for this authority';
-
-CREATE INDEX IF NOT EXISTS idx_per_tax_detail_bill ON per.property_tax_detail(tax_bill_id);
-
--- ============================================================================
--- PER.PROPERTY_TAX_PAYMENT - Personal property tax payment history
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS per.property_tax_payment (
-    id SERIAL PRIMARY KEY,
-    tax_bill_id INTEGER NOT NULL REFERENCES per.property_tax_bill(id),
-    
-    payment_date DATE NOT NULL,
-    amount NUMERIC(10,2) NOT NULL,
-    interest_amount NUMERIC(10,2) DEFAULT 0,
-    penalty_amount NUMERIC(10,2) DEFAULT 0,
-    total_payment NUMERIC(10,2) NOT NULL,
-    
-    receipt_number VARCHAR(50),
-    payment_method VARCHAR(50),  -- 'check', 'online', 'escrow'
-    paid_from VARCHAR(100),      -- 'escrow', 'direct', account code
-    
+    paid_date DATE,
+    payment_status VARCHAR(20) DEFAULT 'unpaid',
+    late_fees NUMERIC(10,2) DEFAULT 0,
+    interest_charges NUMERIC(10,2) DEFAULT 0,
     notes TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_tax_season CHECK (tax_season IN ('Summer', 'Winter')),
+    CONSTRAINT chk_payment_status CHECK (payment_status IN ('unpaid', 'partial', 'paid', 'delinquent')),
+    CONSTRAINT chk_pre_pct CHECK (pre_pct >= 0 AND pre_pct <= 100),
+    CONSTRAINT chk_balance CHECK (balance_due >= 0),
+    CONSTRAINT uk_tax_bill UNIQUE (property_code, tax_year, tax_season)
 );
 
-COMMENT ON TABLE per.property_tax_payment IS 'Payment history for property tax bills';
-COMMENT ON COLUMN per.property_tax_payment.payment_method IS 'check, online, escrow, etc.';
-COMMENT ON COLUMN per.property_tax_payment.paid_from IS 'Payment source: escrow, direct, or account code';
+COMMENT ON TABLE acc.property_tax_bill IS 'Property tax bills with assessment values and payment tracking';
+COMMENT ON COLUMN acc.property_tax_bill.property_code IS 'Property code: 905brown, 711pine, 819helen';
+COMMENT ON COLUMN acc.property_tax_bill.tax_season IS 'Summer (July) or Winter (December)';
+COMMENT ON COLUMN acc.property_tax_bill.assessed_value IS 'Full assessed property value';
+COMMENT ON COLUMN acc.property_tax_bill.taxable_value IS 'Taxable value (may be capped)';
+COMMENT ON COLUMN acc.property_tax_bill.pre_pct IS 'Principal Residence Exemption percentage (0-100)';
+COMMENT ON COLUMN acc.property_tax_bill.millage_rate IS 'Mill rate applied to taxable value';
+COMMENT ON COLUMN acc.property_tax_bill.total_due IS 'Total amount due including fees';
+COMMENT ON COLUMN acc.property_tax_bill.total_paid IS 'Total amount paid so far';
+COMMENT ON COLUMN acc.property_tax_bill.balance_due IS 'Remaining balance';
+COMMENT ON COLUMN acc.property_tax_bill.payment_status IS 'unpaid, partial, paid, delinquent';
 
-CREATE INDEX IF NOT EXISTS idx_per_tax_payment_bill ON per.property_tax_payment(tax_bill_id);
-CREATE INDEX IF NOT EXISTS idx_per_tax_payment_date ON per.property_tax_payment(payment_date);
+CREATE INDEX IF NOT EXISTS idx_property_tax_property ON acc.property_tax_bill(property_code);
+CREATE INDEX IF NOT EXISTS idx_property_tax_year ON acc.property_tax_bill(tax_year);
+CREATE INDEX IF NOT EXISTS idx_property_tax_season ON acc.property_tax_bill(tax_season);
+CREATE INDEX IF NOT EXISTS idx_property_tax_status ON acc.property_tax_bill(payment_status);
+CREATE INDEX IF NOT EXISTS idx_property_tax_balance ON acc.property_tax_bill(balance_due) WHERE balance_due > 0;
 
 -- ============================================================================
--- MHB.PROPERTY_TAX_BILL - MHB property tax bills
+-- PROPERTY_TAX_PAYMENT - Individual tax payments
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS mhb.property_tax_bill (
+CREATE TABLE IF NOT EXISTS acc.property_tax_payment (
     id SERIAL PRIMARY KEY,
-    property_code VARCHAR(50) NOT NULL,
-    tax_year INTEGER NOT NULL,
-    tax_season VARCHAR(10) NOT NULL,  -- 'summer' or 'winter'
-    
-    -- Assessment Info
-    school_district VARCHAR(20),
-    property_class VARCHAR(20),       -- '401' = residential
-    pre_pct NUMERIC(7,4),             -- Principal Residence Exemption %
-    assessed_value NUMERIC(12,2),     -- SEV
-    taxable_value NUMERIC(12,2),
-    
-    -- Bill Amounts
-    total_millage NUMERIC(10,6),
-    base_tax NUMERIC(10,2) NOT NULL,
-    admin_fee NUMERIC(10,2) DEFAULT 0,
-    total_due NUMERIC(10,2) NOT NULL,
-    
-    -- Due Date & Status
-    due_date DATE,
-    
-    -- Payment Tracking (updated by triggers)
-    total_paid NUMERIC(10,2) DEFAULT 0,
-    interest_paid NUMERIC(10,2) DEFAULT 0,
-    balance_due NUMERIC(10,2),  -- Calculated as total_due - total_paid
-    status VARCHAR(20) DEFAULT 'unpaid',  -- 'unpaid', 'partial', 'paid', 'delinquent'
-    
-    -- Metadata
-    bill_number VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    
-    UNIQUE(property_code, tax_year, tax_season),
-    CONSTRAINT chk_mhb_tax_season CHECK (tax_season IN ('summer', 'winter')),
-    CONSTRAINT chk_mhb_tax_status CHECK (status IN ('unpaid', 'partial', 'paid', 'delinquent'))
-);
-
-COMMENT ON TABLE mhb.property_tax_bill IS 'MHB property tax bills with assessment and payment tracking';
-COMMENT ON COLUMN mhb.property_tax_bill.tax_season IS 'summer or winter billing cycle';
-COMMENT ON COLUMN mhb.property_tax_bill.property_class IS '401 = residential, etc.';
-COMMENT ON COLUMN mhb.property_tax_bill.pre_pct IS 'Principal Residence Exemption percentage (e.g., 0.1800 for 18%)';
-COMMENT ON COLUMN mhb.property_tax_bill.total_millage IS 'Total millage rate applied';
-COMMENT ON COLUMN mhb.property_tax_bill.balance_due IS 'Automatically calculated: total_due - total_paid';
-
-CREATE INDEX IF NOT EXISTS idx_mhb_tax_bill_property ON mhb.property_tax_bill(property_code);
-CREATE INDEX IF NOT EXISTS idx_mhb_tax_bill_year ON mhb.property_tax_bill(tax_year);
-CREATE INDEX IF NOT EXISTS idx_mhb_tax_bill_status ON mhb.property_tax_bill(status);
-
--- ============================================================================
--- MHB.PROPERTY_TAX_DETAIL - MHB property tax millage breakdown
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS mhb.property_tax_detail (
-    id SERIAL PRIMARY KEY,
-    tax_bill_id INTEGER NOT NULL REFERENCES mhb.property_tax_bill(id) ON DELETE CASCADE,
-    
-    taxing_authority VARCHAR(100) NOT NULL,  -- 'STATE ED', 'CITY OPERATING', etc.
-    millage_rate NUMERIC(10,6) NOT NULL,
-    amount NUMERIC(10,2) NOT NULL,
-    amount_paid NUMERIC(10,2) DEFAULT 0,
-    
-    UNIQUE(tax_bill_id, taxing_authority)
-);
-
-COMMENT ON TABLE mhb.property_tax_detail IS 'Millage breakdown by taxing authority for each tax bill';
-COMMENT ON COLUMN mhb.property_tax_detail.taxing_authority IS 'Tax authority name (STATE ED, CITY OPERATING, etc.)';
-COMMENT ON COLUMN mhb.property_tax_detail.millage_rate IS 'Millage rate for this authority';
-
-CREATE INDEX IF NOT EXISTS idx_mhb_tax_detail_bill ON mhb.property_tax_detail(tax_bill_id);
-
--- ============================================================================
--- MHB.PROPERTY_TAX_PAYMENT - MHB property tax payment history
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS mhb.property_tax_payment (
-    id SERIAL PRIMARY KEY,
-    tax_bill_id INTEGER NOT NULL REFERENCES mhb.property_tax_bill(id),
-    
+    tax_bill_id INTEGER NOT NULL REFERENCES acc.property_tax_bill(id) ON DELETE CASCADE,
     payment_date DATE NOT NULL,
-    amount NUMERIC(10,2) NOT NULL,
-    interest_amount NUMERIC(10,2) DEFAULT 0,
-    penalty_amount NUMERIC(10,2) DEFAULT 0,
-    total_payment NUMERIC(10,2) NOT NULL,
-    
-    receipt_number VARCHAR(50),
-    payment_method VARCHAR(50),  -- 'check', 'online', 'escrow'
-    paid_from VARCHAR(100),      -- 'escrow', 'direct', account code
-    
+    amount NUMERIC(12,2) NOT NULL,
+    payment_method VARCHAR(50),
+    check_number VARCHAR(50),
+    confirmation_number VARCHAR(100),
+    bank_staging_id INTEGER REFERENCES acc.bank_staging(id),
     notes TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_payment_amount CHECK (amount > 0)
 );
 
-COMMENT ON TABLE mhb.property_tax_payment IS 'Payment history for property tax bills';
-COMMENT ON COLUMN mhb.property_tax_payment.payment_method IS 'check, online, escrow, etc.';
-COMMENT ON COLUMN mhb.property_tax_payment.paid_from IS 'Payment source: escrow, direct, or account code';
+COMMENT ON TABLE acc.property_tax_payment IS 'Individual tax payments applied to bills';
+COMMENT ON COLUMN acc.property_tax_payment.tax_bill_id IS 'Foreign key to property_tax_bill';
+COMMENT ON COLUMN acc.property_tax_payment.bank_staging_id IS 'Link to bank_staging for import';
 
-CREATE INDEX IF NOT EXISTS idx_mhb_tax_payment_bill ON mhb.property_tax_payment(tax_bill_id);
-CREATE INDEX IF NOT EXISTS idx_mhb_tax_payment_date ON mhb.property_tax_payment(payment_date);
-
--- ============================================================================
--- TRIGGERS - PER schema
--- ============================================================================
-
-CREATE OR REPLACE FUNCTION per.fn_update_tax_bill_on_payment()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_bill_id INTEGER;
-    v_total_paid NUMERIC(10,2);
-    v_interest_paid NUMERIC(10,2);
-    v_total_due NUMERIC(10,2);
-BEGIN
-    -- Get the bill ID from the payment record
-    v_bill_id := COALESCE(NEW.tax_bill_id, OLD.tax_bill_id);
-    
-    -- Calculate totals once
-    SELECT 
-        COALESCE(SUM(amount), 0),
-        COALESCE(SUM(interest_amount), 0)
-    INTO v_total_paid, v_interest_paid
-    FROM per.property_tax_payment 
-    WHERE tax_bill_id = v_bill_id;
-    
-    -- Get total due for status calculation
-    SELECT total_due INTO v_total_due
-    FROM per.property_tax_bill
-    WHERE id = v_bill_id;
-    
-    -- Update the tax bill totals
-    UPDATE per.property_tax_bill
-    SET 
-        total_paid = v_total_paid,
-        interest_paid = v_interest_paid,
-        balance_due = v_total_due - v_total_paid,
-        status = CASE 
-            WHEN v_total_due <= v_total_paid THEN 'paid'
-            WHEN v_total_paid > 0 THEN 'partial'
-            ELSE 'unpaid'
-        END,
-        updated_at = NOW()
-    WHERE id = v_bill_id;
-    
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION per.fn_update_tax_bill_on_payment() IS 'Updates tax bill totals and status when payments are inserted, updated, or deleted';
-
-CREATE TRIGGER trg_update_tax_bill_on_payment
-    AFTER INSERT OR UPDATE OR DELETE ON per.property_tax_payment
-    FOR EACH ROW
-    EXECUTE FUNCTION per.fn_update_tax_bill_on_payment();
+CREATE INDEX IF NOT EXISTS idx_property_tax_payment_bill ON acc.property_tax_payment(tax_bill_id);
+CREATE INDEX IF NOT EXISTS idx_property_tax_payment_date ON acc.property_tax_payment(payment_date);
 
 -- ============================================================================
--- TRIGGERS - MHB schema
+-- VIEW: Foreclosure Risk Analysis
 -- ============================================================================
 
-CREATE OR REPLACE FUNCTION mhb.fn_update_tax_bill_on_payment()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_bill_id INTEGER;
-    v_total_paid NUMERIC(10,2);
-    v_interest_paid NUMERIC(10,2);
-    v_total_due NUMERIC(10,2);
-BEGIN
-    -- Get the bill ID from the payment record
-    v_bill_id := COALESCE(NEW.tax_bill_id, OLD.tax_bill_id);
-    
-    -- Calculate totals once
-    SELECT 
-        COALESCE(SUM(amount), 0),
-        COALESCE(SUM(interest_amount), 0)
-    INTO v_total_paid, v_interest_paid
-    FROM mhb.property_tax_payment 
-    WHERE tax_bill_id = v_bill_id;
-    
-    -- Get total due for status calculation
-    SELECT total_due INTO v_total_due
-    FROM mhb.property_tax_bill
-    WHERE id = v_bill_id;
-    
-    -- Update the tax bill totals
-    UPDATE mhb.property_tax_bill
-    SET 
-        total_paid = v_total_paid,
-        interest_paid = v_interest_paid,
-        balance_due = v_total_due - v_total_paid,
-        status = CASE 
-            WHEN v_total_due <= v_total_paid THEN 'paid'
-            WHEN v_total_paid > 0 THEN 'partial'
-            ELSE 'unpaid'
-        END,
-        updated_at = NOW()
-    WHERE id = v_bill_id;
-    
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE VIEW acc.v_property_tax_foreclosure_risk AS
+SELECT 
+    b.property_code,
+    b.tax_year,
+    b.tax_season,
+    b.total_due,
+    b.balance_due,
+    EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year as years_delinquent,
+    CASE 
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 5 THEN 'CRITICAL'
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 3 THEN 'HIGH'
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 2 THEN 'MEDIUM'
+        ELSE 'LOW'
+    END as risk_level
+FROM acc.property_tax_bill b
+WHERE b.balance_due > 0
+  AND EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 3
+ORDER BY b.tax_year, b.property_code;
 
-COMMENT ON FUNCTION mhb.fn_update_tax_bill_on_payment() IS 'Updates tax bill totals and status when payments are inserted, updated, or deleted';
-
-CREATE TRIGGER trg_update_tax_bill_on_payment
-    AFTER INSERT OR UPDATE OR DELETE ON mhb.property_tax_payment
-    FOR EACH ROW
-    EXECUTE FUNCTION mhb.fn_update_tax_bill_on_payment();
+COMMENT ON VIEW acc.v_property_tax_foreclosure_risk IS 'Properties at risk of tax foreclosure (3+ years delinquent)';
 
 -- ============================================================================
--- VIEWS - PER schema
+-- VIEW: Payment Priority Recommendations
 -- ============================================================================
 
--- Outstanding tax balances view
-CREATE OR REPLACE VIEW per.v_property_tax_outstanding AS
+CREATE OR REPLACE VIEW acc.v_property_tax_priority AS
 SELECT 
     b.property_code,
     b.tax_year,
@@ -336,106 +121,60 @@ SELECT
     b.total_due,
     b.total_paid,
     b.balance_due,
-    b.status,
-    b.due_date,
+    EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year as years_delinquent,
     CASE 
-        WHEN b.balance_due > 0 AND b.due_date < CURRENT_DATE THEN 'OVERDUE'
-        WHEN b.balance_due > 0 THEN 'DUE'
-        ELSE 'PAID'
-    END as payment_status,
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 5 THEN 1
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 3 THEN 2
+        WHEN b.total_paid > 0 AND b.balance_due > 0 THEN 3  -- Partial payments
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 2 THEN 4
+        ELSE 5
+    END as priority_rank,
     CASE 
-        WHEN b.due_date < CURRENT_DATE THEN CURRENT_DATE - b.due_date 
-        ELSE 0 
-    END as days_overdue
-FROM per.property_tax_bill b
-WHERE b.balance_due > 0 OR b.balance_due IS NULL
-ORDER BY b.due_date, b.property_code;
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 5 THEN 'CRITICAL - Foreclosure imminent'
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 3 THEN 'HIGH - Foreclosure risk'
+        WHEN b.total_paid > 0 AND b.balance_due > 0 THEN 'MEDIUM - Partial payment'
+        WHEN EXTRACT(YEAR FROM CURRENT_DATE) - b.tax_year >= 2 THEN 'MEDIUM - 2 years delinquent'
+        ELSE 'LOW - Recent'
+    END as priority_reason
+FROM acc.property_tax_bill b
+WHERE b.balance_due > 0
+ORDER BY priority_rank, b.tax_year, b.tax_season;
 
-COMMENT ON VIEW per.v_property_tax_outstanding IS 'Outstanding property tax balances with overdue status';
+COMMENT ON VIEW acc.v_property_tax_priority IS 'Payment priority recommendations based on foreclosure risk';
 
--- Tax history summary view
-CREATE OR REPLACE VIEW per.v_property_tax_history AS
+-- ============================================================================
+-- VIEW: Assessment and Tax Trends
+-- ============================================================================
+
+CREATE OR REPLACE VIEW acc.v_property_tax_trends AS
 SELECT 
     b.property_code,
     b.tax_year,
-    SUM(CASE WHEN b.tax_season = 'summer' THEN b.total_due ELSE 0 END) as summer_tax,
-    SUM(CASE WHEN b.tax_season = 'winter' THEN b.total_due ELSE 0 END) as winter_tax,
+    MAX(b.assessed_value) as assessed_value,
+    MAX(b.taxable_value) as taxable_value,
+    MAX(b.pre_pct) as pre_pct,
     SUM(b.total_due) as annual_tax,
     SUM(b.total_paid) as annual_paid,
     SUM(b.balance_due) as annual_balance,
-    MAX(b.assessed_value) as assessed_value,
-    MAX(b.taxable_value) as taxable_value
-FROM per.property_tax_bill b
+    LAG(MAX(b.assessed_value)) OVER (PARTITION BY b.property_code ORDER BY b.tax_year) as prev_assessed,
+    LAG(SUM(b.total_due)) OVER (PARTITION BY b.property_code ORDER BY b.tax_year) as prev_tax
+FROM acc.property_tax_bill b
 GROUP BY b.property_code, b.tax_year
-ORDER BY b.property_code, b.tax_year DESC;
+ORDER BY b.property_code, b.tax_year;
 
-COMMENT ON VIEW per.v_property_tax_history IS 'Annual property tax history summary by property';
-
--- ============================================================================
--- VIEWS - MHB schema
--- ============================================================================
-
--- Outstanding tax balances view
-CREATE OR REPLACE VIEW mhb.v_property_tax_outstanding AS
-SELECT 
-    b.property_code,
-    b.tax_year,
-    b.tax_season,
-    b.total_due,
-    b.total_paid,
-    b.balance_due,
-    b.status,
-    b.due_date,
-    CASE 
-        WHEN b.balance_due > 0 AND b.due_date < CURRENT_DATE THEN 'OVERDUE'
-        WHEN b.balance_due > 0 THEN 'DUE'
-        ELSE 'PAID'
-    END as payment_status,
-    CASE 
-        WHEN b.due_date < CURRENT_DATE THEN CURRENT_DATE - b.due_date 
-        ELSE 0 
-    END as days_overdue
-FROM mhb.property_tax_bill b
-WHERE b.balance_due > 0 OR b.balance_due IS NULL
-ORDER BY b.due_date, b.property_code;
-
-COMMENT ON VIEW mhb.v_property_tax_outstanding IS 'Outstanding property tax balances with overdue status';
-
--- Tax history summary view
-CREATE OR REPLACE VIEW mhb.v_property_tax_history AS
-SELECT 
-    b.property_code,
-    b.tax_year,
-    SUM(CASE WHEN b.tax_season = 'summer' THEN b.total_due ELSE 0 END) as summer_tax,
-    SUM(CASE WHEN b.tax_season = 'winter' THEN b.total_due ELSE 0 END) as winter_tax,
-    SUM(b.total_due) as annual_tax,
-    SUM(b.total_paid) as annual_paid,
-    SUM(b.balance_due) as annual_balance,
-    MAX(b.assessed_value) as assessed_value,
-    MAX(b.taxable_value) as taxable_value
-FROM mhb.property_tax_bill b
-GROUP BY b.property_code, b.tax_year
-ORDER BY b.property_code, b.tax_year DESC;
-
-COMMENT ON VIEW mhb.v_property_tax_history IS 'Annual property tax history summary by property';
+COMMENT ON VIEW acc.v_property_tax_trends IS 'Historical assessment and tax trends with year-over-year comparisons';
 
 -- ============================================================================
 -- Grant permissions
 -- ============================================================================
 
-GRANT ALL ON TABLE per.property_tax_bill TO frank;
-GRANT ALL ON SEQUENCE per.property_tax_bill_id_seq TO frank;
-GRANT ALL ON TABLE per.property_tax_detail TO frank;
-GRANT ALL ON SEQUENCE per.property_tax_detail_id_seq TO frank;
-GRANT ALL ON TABLE per.property_tax_payment TO frank;
-GRANT ALL ON SEQUENCE per.property_tax_payment_id_seq TO frank;
+GRANT ALL ON TABLE acc.property_tax_bill TO frank;
+GRANT ALL ON SEQUENCE acc.property_tax_bill_id_seq TO frank;
 
-GRANT ALL ON TABLE mhb.property_tax_bill TO frank;
-GRANT ALL ON SEQUENCE mhb.property_tax_bill_id_seq TO frank;
-GRANT ALL ON TABLE mhb.property_tax_detail TO frank;
-GRANT ALL ON SEQUENCE mhb.property_tax_detail_id_seq TO frank;
-GRANT ALL ON TABLE mhb.property_tax_payment TO frank;
-GRANT ALL ON SEQUENCE mhb.property_tax_payment_id_seq TO frank;
+GRANT ALL ON TABLE acc.property_tax_payment TO frank;
+GRANT ALL ON SEQUENCE acc.property_tax_payment_id_seq TO frank;
+
+-- Views automatically inherit permissions from underlying tables
 
 -- ============================================================================
 -- END OF MIGRATION
