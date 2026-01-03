@@ -295,11 +295,7 @@ def tax_trends(property_code, years):
     console.print()
     
     # Check for PRE exemption loss
-    pre_lost_year = None
-    for i, r in enumerate(results):
-        if i > 0 and results[i-1]['pre_pct'] and results[i-1]['pre_pct'] > 0 and (not r['pre_pct'] or r['pre_pct'] == 0):
-            pre_lost_year = r['tax_year']
-            break
+    pre_lost_year = _find_pre_exemption_lost_year(results)
     
     if pre_lost_year:
         console.print(f"                         ↑")
@@ -354,19 +350,34 @@ def tax_trends(property_code, years):
     
     console.print()
 
+def _find_pre_exemption_lost_year(results):
+    """Find the year when PRE exemption was lost"""
+    for i, r in enumerate(results):
+        if i > 0:
+            prev_had_pre = results[i-1]['pre_pct'] and results[i-1]['pre_pct'] > 0
+            curr_no_pre = not r['pre_pct'] or r['pre_pct'] == 0
+            if prev_had_pre and curr_no_pre:
+                return r['tax_year']
+    return None
+
 def _draw_ascii_chart(values, labels, prefix='', height=8, width=60):
     """Draw a simple ASCII bar chart"""
     
-    if not values or len(values) == 0:
+    # Filter out None values
+    valid_data = [(v, l) for v, l in zip(values, labels) if v is not None]
+    
+    if not valid_data:
         console.print("[dim]No data available[/dim]")
         return
+    
+    values, labels = zip(*valid_data)
     
     max_val = max(values)
     min_val = min(values)
     val_range = max_val - min_val if max_val != min_val else max_val
     
     if val_range == 0:
-        val_range = max_val
+        val_range = max_val if max_val > 0 else 1  # Prevent division by zero
     
     # Generate Y-axis labels
     y_labels = []
@@ -562,6 +573,8 @@ def _export_json(results, output_file):
         json.dump(json_results, f, indent=2)
 
 def _export_pdf(results, output_file, report_type):
-    """Export results to PDF (placeholder - requires reportlab)"""
-    console.print("[yellow]PDF export not yet implemented. Please use CSV or JSON format.[/yellow]")
-    console.print("[dim]To enable PDF export, install: pip install reportlab[/dim]")
+    """Export results to PDF (requires reportlab - not yet implemented)"""
+    raise NotImplementedError(
+        "PDF export requires reportlab library. "
+        "Install with: pip install reportlab, or use CSV/JSON format instead."
+    )
