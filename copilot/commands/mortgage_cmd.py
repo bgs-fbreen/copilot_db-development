@@ -311,6 +311,33 @@ def mortgage_help():
 # MORTGAGE IMPORT COMMAND
 # ============================================================================
 
+# Transaction type constants for CSV import
+# Based on Central Savings Bank transaction type codes:
+# Payment Types - Import as mortgage payments:
+#   620 - Regular payment
+#   612 - User defined regular payment  
+#   610 - Regular payment (variant)
+#   660 - Special payment (extra principal)
+PAYMENT_TYPES = {'620', '612', '610', '660'}
+
+# Skip Types - Do not import (non-payment transactions):
+#   800 - Reversal (correction/cancellation of previous transaction)
+#   668 - System-generated payment (duplicates principal, causes double-counting)
+#   400 - Rate change (informational, amount is new rate not payment)
+#   410 - Rate change reversal (informational)
+#   310 - New note (loan origination record)
+#   750 - Note increase (balance adjustment, not a payment)
+SKIP_TYPES = {'800', '668', '400', '410', '310', '750'}
+
+# Conditional Types - Import only if meaningful payment (principal > 0 OR interest > 0):
+#   619 - ACH/autopayment (may be placeholder with zero P&I)
+CONDITIONAL_TYPES = {'619'}
+
+# Escrow Types - Route to escrow table (existing behavior):
+#   710 - Escrow disbursement
+#   716 - Escrow auto-disbursement  
+ESCROW_TYPES = {'710', '716'}
+
 def parse_csv_date(date_str):
     """Parse date from CSV 'Effective / Posted' column - extract first date"""
     if not date_str:
@@ -445,6 +472,16 @@ def mortgage_import(file, property, dry_run):
     escrow_to_import = []
     duplicates = 0
     
+    # Statistics for skipped records
+    stats = {
+        'skipped_reversals': 0,
+        'skipped_system': 0,
+        'skipped_rate_changes': 0,
+        'skipped_other_types': 0,
+        'skipped_zero_amount': 0,
+        'skipped_zero_pi': 0,
+    }
+    
     # Get existing payments and escrow to detect duplicates
     existing_payments = execute_query(f"""
         SELECT payment_date, amount 
@@ -467,9 +504,24 @@ def mortgage_import(file, property, dry_run):
         if not effective_date:
             continue
         
-        # Parse type code
-        type_field = row.get('Type', '')
+        # Parse type code - handle asterisk prefix
+        type_field = row.get('Type', '').strip()
+        if type_field.startswith('*'):
+            type_field = type_field[1:].strip()
+        
         type_code = type_field.split(' - ')[0].strip() if ' - ' in type_field else ''
+        
+        # Skip known non-payment types
+        if type_code in SKIP_TYPES:
+            if type_code == '800':
+                stats['skipped_reversals'] += 1
+            elif type_code == '668':
+                stats['skipped_system'] += 1
+            elif type_code in ('400', '410'):
+                stats['skipped_rate_changes'] += 1
+            else:  # '310', '750'
+                stats['skipped_other_types'] += 1
+            continue
         
         # Parse amounts
         amount = parse_csv_amount(row.get('Amount', ''))
@@ -477,23 +529,13 @@ def mortgage_import(file, property, dry_run):
         interest = parse_csv_amount(row.get('Interest', ''))
         balance = parse_csv_amount(row.get('Balance', ''))
         
-        # Route based on type code
-        if type_code in ('620', '612'):
-            # Payment transaction
-            if (effective_date, amount) in existing_payment_set:
-                duplicates += 1
-                continue
-            
-            payments_to_import.append({
-                'date': effective_date,
-                'amount': amount,
-                'principal': principal,
-                'interest': interest,
-                'balance': balance,
-                'type': type_field
-            })
+        # Skip zero/negative amounts (except for escrow which can be handled separately)
+        if type_code not in ESCROW_TYPES and amount <= 0:
+            stats['skipped_zero_amount'] += 1
+            continue
         
-        elif type_code in ('710', '716'):
+        # Route escrow transactions
+        if type_code in ESCROW_TYPES:
             # Escrow transaction - disbursements from escrow account
             # CSV amounts are positive, store as positive in disbursement table
             escrow_amount = abs(amount)
@@ -509,6 +551,28 @@ def mortgage_import(file, property, dry_run):
                 'amount': escrow_amount,
                 'escrow_type': escrow_type,
                 'description': type_field
+            })
+            continue
+        
+        # Payment types and conditional types - check for valid payment data
+        if type_code in PAYMENT_TYPES or type_code in CONDITIONAL_TYPES:
+            # Skip if both principal AND interest are 0 (not a meaningful payment)
+            if principal <= 0 and interest <= 0:
+                stats['skipped_zero_pi'] += 1
+                continue
+            
+            # Check for duplicates
+            if (effective_date, amount) in existing_payment_set:
+                duplicates += 1
+                continue
+            
+            payments_to_import.append({
+                'date': effective_date,
+                'amount': amount,
+                'principal': principal,
+                'interest': interest,
+                'balance': balance,
+                'type': type_field
             })
     
     # Calculate summary by escrow type
@@ -529,7 +593,7 @@ def mortgage_import(file, property, dry_run):
         console.print(f"\n[bold cyan]Dry Run - Preview of import for {property}[/bold cyan]")
         console.print("─" * 50)
         console.print(f"File: {file}")
-        console.print(f"Records: {len(rows)}")
+        console.print(f"Total Records: {len(rows)}")
         console.print(f"\nPayments to import: {len(payments_to_import)}")
         console.print(f"Escrow transactions: {len(escrow_to_import)}")
         
@@ -537,7 +601,25 @@ def mortgage_import(file, property, dry_run):
             for esc_type, count in sorted(escrow_summary.items()):
                 console.print(f"  - {esc_type.replace('_', ' ').title()}: {count}")
         
-        console.print(f"\nDuplicates to skip: {duplicates}")
+        # Show skipped records breakdown
+        total_skipped = sum(stats.values())
+        if total_skipped > 0:
+            console.print(f"\nSkipped ({total_skipped} total):")
+            if stats['skipped_reversals'] > 0:
+                console.print(f"  - Reversals (800): {stats['skipped_reversals']}")
+            if stats['skipped_system'] > 0:
+                console.print(f"  - System-generated (668): {stats['skipped_system']}")
+            if stats['skipped_rate_changes'] > 0:
+                console.print(f"  - Rate changes (400/410): {stats['skipped_rate_changes']}")
+            if stats['skipped_other_types'] > 0:
+                console.print(f"  - Other non-payment types (310/750): {stats['skipped_other_types']}")
+            if stats['skipped_zero_amount'] > 0:
+                console.print(f"  - Zero/negative amount: {stats['skipped_zero_amount']}")
+            if stats['skipped_zero_pi'] > 0:
+                console.print(f"  - Zero principal & interest: {stats['skipped_zero_pi']}")
+        
+        if duplicates > 0:
+            console.print(f"\nDuplicates to skip: {duplicates}")
         
         if new_balance is not None:
             console.print(f"\nNew balance will be: ${new_balance:,.2f}")
@@ -605,6 +687,23 @@ def mortgage_import(file, property, dry_run):
         console.print(f"[green]✓[/green] Imported {escrow_count} escrow transactions")
         if new_balance is not None:
             console.print(f"[green]✓[/green] Updated current balance: ${new_balance:,.2f}")
+        
+        # Show skip statistics
+        total_skipped = sum(stats.values())
+        if total_skipped > 0:
+            console.print(f"\n[bold]Skipped {total_skipped} non-payment records:[/bold]")
+            if stats['skipped_reversals'] > 0:
+                console.print(f"  - Reversals (800): {stats['skipped_reversals']}")
+            if stats['skipped_system'] > 0:
+                console.print(f"  - System-generated (668): {stats['skipped_system']}")
+            if stats['skipped_rate_changes'] > 0:
+                console.print(f"  - Rate changes (400/410): {stats['skipped_rate_changes']}")
+            if stats['skipped_other_types'] > 0:
+                console.print(f"  - Other non-payment types (310/750): {stats['skipped_other_types']}")
+            if stats['skipped_zero_amount'] > 0:
+                console.print(f"  - Zero/negative amount: {stats['skipped_zero_amount']}")
+            if stats['skipped_zero_pi'] > 0:
+                console.print(f"  - Zero P&I: {stats['skipped_zero_pi']}")
         
         if duplicates > 0:
             console.print(f"\nSkipped {duplicates} duplicates")
