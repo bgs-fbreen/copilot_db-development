@@ -21,6 +21,7 @@ import csv
 import psycopg2
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import numpy as np
 
 console = Console()
 
@@ -1102,14 +1103,36 @@ def print_summary_report(mortgage, projected, actual, stats):
     
     console.print()
 
+def insert_gaps_for_missing_data(dates, values, max_gap_days=45):
+    """Insert NaN values where there are gaps > max_gap_days to break the line."""
+    if len(dates) < 2:
+        return dates, values
+    
+    new_dates = []
+    new_values = []
+    
+    for i in range(len(dates)):
+        new_dates.append(dates[i])
+        new_values.append(values[i])
+        
+        # Check if there's a gap to next point
+        if i < len(dates) - 1:
+            gap = (dates[i+1] - dates[i]).days
+            if gap > max_gap_days:
+                # Insert NaN to break the line
+                new_dates.append(dates[i] + timedelta(days=1))
+                new_values.append(np.nan)
+    
+    return new_dates, new_values
+
 def display_charts(mortgage, projected, actual):
     """Generate and display matplotlib charts"""
     if not projected:
         console.print("[yellow]⚠ No projection data available for charts[/yellow]")
         return
     
-    # Create figure with 3 subplots (stacked vertically) - 10% smaller
-    fig, axes = plt.subplots(3, 1, figsize=(12.6, 9))
+    # Create figure with 3 subplots (stacked vertically) - 15% narrower, 10% shorter from original 14x10
+    fig, axes = plt.subplots(3, 1, figsize=(10.7, 8.1))
     
     property_code = mortgage['property_code']
     full_address = f"{mortgage['address']}, {mortgage['city']}, {mortgage['state']}"
@@ -1126,6 +1149,12 @@ def display_charts(mortgage, projected, actual):
     act_principal = [float(a['principal']) for a in actual]
     act_interest = [float(a['interest']) for a in actual]
     act_balance = [float(a['balance_after']) for a in actual]
+    
+    # Insert gaps for missing data (> 45 days between payments)
+    if act_dates:
+        act_dates, act_principal = insert_gaps_for_missing_data(act_dates, act_principal)
+        act_dates, act_interest = insert_gaps_for_missing_data(act_dates, act_interest)
+        act_dates, act_balance = insert_gaps_for_missing_data(act_dates, act_balance)
     
     # Panel 1: Principal per Payment
     axes[0].plot(proj_dates, proj_principal, 'b--', label='Projected Principal', linewidth=2)
