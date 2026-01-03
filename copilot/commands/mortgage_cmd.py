@@ -1151,10 +1151,16 @@ def display_charts(mortgage, projected, actual):
     act_balance = [float(a['balance_after']) for a in actual]
     
     # Insert gaps for missing data (> 45 days between payments)
+    # Apply gap detection once to get the gapped date array, then apply to each value series
     if act_dates:
-        act_dates, act_principal = insert_gaps_for_missing_data(act_dates, act_principal)
-        act_dates, act_interest = insert_gaps_for_missing_data(act_dates, act_interest)
-        act_dates, act_balance = insert_gaps_for_missing_data(act_dates, act_balance)
+        act_dates_gapped, act_principal_gapped = insert_gaps_for_missing_data(act_dates, act_principal)
+        _, act_interest_gapped = insert_gaps_for_missing_data(act_dates, act_interest)
+        _, act_balance_gapped = insert_gaps_for_missing_data(act_dates, act_balance)
+        # Use the gapped arrays for plotting
+        act_dates = act_dates_gapped
+        act_principal = act_principal_gapped
+        act_interest = act_interest_gapped
+        act_balance = act_balance_gapped
     
     # Panel 1: Principal per Payment
     axes[0].plot(proj_dates, proj_principal, 'b--', label='Projected Principal', linewidth=2)
