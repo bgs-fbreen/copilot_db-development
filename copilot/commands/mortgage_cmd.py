@@ -312,10 +312,31 @@ def mortgage_help():
 # ============================================================================
 
 # Transaction type constants for CSV import
-PAYMENT_TYPES = {'620', '612', '610', '660'}  # Types to import as payments
-SKIP_TYPES = {'800', '668', '400', '410', '310', '750'}  # Types to skip entirely
-CONDITIONAL_TYPES = {'619'}  # Import only if principal > 0 OR interest > 0
-ESCROW_TYPES = {'710', '716'}  # Route to escrow table
+# Based on Central Savings Bank transaction type codes:
+# Payment Types - Import as mortgage payments:
+#   620 - Regular payment
+#   612 - User defined regular payment  
+#   610 - Regular payment (variant)
+#   660 - Special payment (extra principal)
+PAYMENT_TYPES = {'620', '612', '610', '660'}
+
+# Skip Types - Do not import (non-payment transactions):
+#   800 - Reversal (correction/cancellation of previous transaction)
+#   668 - System-generated payment (duplicates principal, causes double-counting)
+#   400 - Rate change (informational, amount is new rate not payment)
+#   410 - Rate change reversal (informational)
+#   310 - New note (loan origination record)
+#   750 - Note increase (balance adjustment, not a payment)
+SKIP_TYPES = {'800', '668', '400', '410', '310', '750'}
+
+# Conditional Types - Import only if meaningful payment (principal > 0 OR interest > 0):
+#   619 - ACH/autopayment (may be placeholder with zero P&I)
+CONDITIONAL_TYPES = {'619'}
+
+# Escrow Types - Route to escrow table (existing behavior):
+#   710 - Escrow disbursement
+#   716 - Escrow auto-disbursement  
+ESCROW_TYPES = {'710', '716'}
 
 def parse_csv_date(date_str):
     """Parse date from CSV 'Effective / Posted' column - extract first date"""
@@ -533,16 +554,10 @@ def mortgage_import(file, property, dry_run):
             })
             continue
         
-        # Conditional types - only import if meaningful payment
-        if type_code in CONDITIONAL_TYPES:
-            if principal <= 0 and interest <= 0:
-                stats['skipped_zero_pi'] += 1
-                continue
-        
-        # Payment types - import if in PAYMENT_TYPES or conditional types with valid P/I
+        # Payment types and conditional types - check for valid payment data
         if type_code in PAYMENT_TYPES or type_code in CONDITIONAL_TYPES:
-            # Skip if both principal AND interest are 0 for payment types
-            if type_code in PAYMENT_TYPES and principal == 0 and interest == 0:
+            # Skip if both principal AND interest are 0 (not a meaningful payment)
+            if principal <= 0 and interest <= 0:
                 stats['skipped_zero_pi'] += 1
                 continue
             
@@ -684,7 +699,7 @@ def mortgage_import(file, property, dry_run):
             if stats['skipped_rate_changes'] > 0:
                 console.print(f"  - Rate changes (400/410): {stats['skipped_rate_changes']}")
             if stats['skipped_other_types'] > 0:
-                console.print(f"  - Other non-payment types: {stats['skipped_other_types']}")
+                console.print(f"  - Other non-payment types (310/750): {stats['skipped_other_types']}")
             if stats['skipped_zero_amount'] > 0:
                 console.print(f"  - Zero/negative amount: {stats['skipped_zero_amount']}")
             if stats['skipped_zero_pi'] > 0:
