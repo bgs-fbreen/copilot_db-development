@@ -323,11 +323,14 @@ PAYMENT_TYPES = {'620', '612', '610', '660'}
 # Skip Types - Do not import (non-payment transactions):
 #   800 - Reversal (correction/cancellation of previous transaction)
 #   668 - System-generated payment (duplicates principal, causes double-counting)
-#   400 - Rate change (informational, amount is new rate not payment)
-#   410 - Rate change reversal (informational)
 #   310 - New note (loan origination record)
 #   750 - Note increase (balance adjustment, not a payment)
-SKIP_TYPES = {'800', '668', '400', '410', '310', '750'}
+SKIP_TYPES = {'800', '668', '310', '750'}
+
+# Rate Change Types - Import to rate history table:
+#   400 - Rate change (amount field contains new rate)
+#   410 - Rate change reversal
+RATE_CHANGE_TYPES = {'400', '410'}
 
 # Conditional Types - Import only if meaningful payment (principal > 0 OR interest > 0):
 #   619 - ACH/autopayment (may be placeholder with zero P&I)
@@ -433,6 +436,85 @@ def get_entity_and_mortgage(property_code):
         return entity, result[0]
     return None, None
 
+def insert_rate_change(entity, mortgage_id, effective_date, interest_rate, conn, cur):
+    """
+    Insert a rate change record into mortgage_rate_history table
+    
+    Args:
+        entity: Schema name (mhb or per)
+        mortgage_id: Mortgage ID
+        effective_date: Date the rate change became effective
+        interest_rate: New interest rate as percentage (e.g., 8.25)
+        conn: Database connection
+        cur: Database cursor
+    """
+    if entity not in ALLOWED_ENTITIES:
+        return False
+    
+    try:
+        # Check if rate change already exists
+        check_query = f"""
+            SELECT id FROM {entity}.mortgage_rate_history
+            WHERE mortgage_id = %s AND effective_date = %s
+        """
+        cur.execute(check_query, (mortgage_id, effective_date))
+        existing = cur.fetchone()
+        
+        if existing:
+            # Update existing rate change
+            update_query = f"""
+                UPDATE {entity}.mortgage_rate_history
+                SET interest_rate = %s
+                WHERE mortgage_id = %s AND effective_date = %s
+            """
+            cur.execute(update_query, (interest_rate, mortgage_id, effective_date))
+        else:
+            # Insert new rate change
+            insert_query = f"""
+                INSERT INTO {entity}.mortgage_rate_history 
+                (mortgage_id, effective_date, interest_rate)
+                VALUES (%s, %s, %s)
+            """
+            cur.execute(insert_query, (mortgage_id, effective_date, interest_rate))
+        
+        return True
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not insert rate change: {e}[/yellow]")
+        return False
+
+def update_mortgage_current_rate(entity, mortgage_id, conn, cur):
+    """
+    Update mortgage.interest_rate with the latest rate from rate history
+    
+    Args:
+        entity: Schema name (mhb or per)
+        mortgage_id: Mortgage ID
+        conn: Database connection
+        cur: Database cursor
+    """
+    if entity not in ALLOWED_ENTITIES:
+        return
+    
+    try:
+        query = f"""
+            UPDATE {entity}.mortgage m
+            SET interest_rate = (
+                SELECT interest_rate 
+                FROM {entity}.mortgage_rate_history rh
+                WHERE rh.mortgage_id = m.id
+                ORDER BY effective_date DESC
+                LIMIT 1
+            )
+            WHERE m.id = %s
+            AND EXISTS (
+                SELECT 1 FROM {entity}.mortgage_rate_history
+                WHERE mortgage_id = m.id
+            )
+        """
+        cur.execute(query, (mortgage_id,))
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not update current rate: {e}[/yellow]")
+
 @mortgage.command('import')
 @click.option('--file', '-f', type=click.Path(exists=True), required=True, help='CSV file to import')
 @click.option('--property', '-p', required=True, help='Property code (711pine, 819helen, 905brown, parnell)')
@@ -470,16 +552,17 @@ def mortgage_import(file, property, dry_run):
     # Process rows and categorize
     payments_to_import = []
     escrow_to_import = []
+    rate_changes_to_import = []
     duplicates = 0
     
     # Statistics for skipped records
     stats = {
         'skipped_reversals': 0,
         'skipped_system': 0,
-        'skipped_rate_changes': 0,
         'skipped_other_types': 0,
         'skipped_zero_amount': 0,
         'skipped_zero_pi': 0,
+        'rate_changes_imported': 0,
     }
     
     # Get existing payments and escrow to detect duplicates
@@ -511,14 +594,34 @@ def mortgage_import(file, property, dry_run):
         
         type_code = type_field.split(' - ')[0].strip() if ' - ' in type_field else ''
         
+        # Handle rate change types
+        if type_code in RATE_CHANGE_TYPES:
+            # Parse the new rate from the Amount field
+            rate_amount = parse_csv_amount(row.get('Amount', ''))
+            
+            # Convert decimal to percentage if needed
+            # Bank CSV uses decimal format (0.0825 = 8.25%)
+            # Threshold of 1.0 works because real interest rates are typically > 1%
+            # and CSV decimals are < 1 (e.g., 0.0825, 0.0975)
+            if rate_amount < Decimal('1'):
+                new_rate = rate_amount * Decimal('100')
+            else:
+                new_rate = rate_amount
+            
+            # Store rate change for later insertion
+            rate_changes_to_import.append({
+                'date': effective_date,
+                'rate': new_rate.quantize(Decimal('0.0001')),  # 4 decimal places
+                'type': type_field
+            })
+            continue
+        
         # Skip known non-payment types
         if type_code in SKIP_TYPES:
             if type_code == '800':
                 stats['skipped_reversals'] += 1
             elif type_code == '668':
                 stats['skipped_system'] += 1
-            elif type_code in ('400', '410'):
-                stats['skipped_rate_changes'] += 1
             else:  # '310', '750'
                 stats['skipped_other_types'] += 1
             continue
@@ -596,21 +699,26 @@ def mortgage_import(file, property, dry_run):
         console.print(f"Total Records: {len(rows)}")
         console.print(f"\nPayments to import: {len(payments_to_import)}")
         console.print(f"Escrow transactions: {len(escrow_to_import)}")
+        console.print(f"Rate changes: {len(rate_changes_to_import)}")
+        
+        if rate_changes_to_import:
+            console.print("\n[bold]Rate Changes:[/bold]")
+            for rc in sorted(rate_changes_to_import, key=lambda x: x['date']):
+                console.print(f"  {rc['date']}: {rc['rate']:.4f}% - {rc['type']}")
         
         if escrow_summary:
+            console.print("\n[bold]Escrow Breakdown:[/bold]")
             for esc_type, count in sorted(escrow_summary.items()):
                 console.print(f"  - {esc_type.replace('_', ' ').title()}: {count}")
         
         # Show skipped records breakdown
-        total_skipped = sum(stats.values())
+        total_skipped = sum(stats.values()) - stats['rate_changes_imported']
         if total_skipped > 0:
             console.print(f"\nSkipped ({total_skipped} total):")
             if stats['skipped_reversals'] > 0:
                 console.print(f"  - Reversals (800): {stats['skipped_reversals']}")
             if stats['skipped_system'] > 0:
                 console.print(f"  - System-generated (668): {stats['skipped_system']}")
-            if stats['skipped_rate_changes'] > 0:
-                console.print(f"  - Rate changes (400/410): {stats['skipped_rate_changes']}")
             if stats['skipped_other_types'] > 0:
                 console.print(f"  - Other non-payment types (310/750): {stats['skipped_other_types']}")
             if stats['skipped_zero_amount'] > 0:
@@ -673,6 +781,17 @@ def mortgage_import(file, property, dry_run):
             ))
             escrow_count += 1
         
+        # Insert rate changes
+        rate_change_count = 0
+        for rc in rate_changes_to_import:
+            if insert_rate_change(entity, mortgage_id, rc['date'], rc['rate'], conn, cur):
+                rate_change_count += 1
+                stats['rate_changes_imported'] += 1
+        
+        # Update mortgage with latest rate if we have rate changes
+        if rate_change_count > 0:
+            update_mortgage_current_rate(entity, mortgage_id, conn, cur)
+        
         # Update current balance if we have a new one
         if new_balance is not None:
             cur.execute(f"""
@@ -685,19 +804,19 @@ def mortgage_import(file, property, dry_run):
         
         console.print(f"[green]✓[/green] Imported {payment_count} payments")
         console.print(f"[green]✓[/green] Imported {escrow_count} escrow transactions")
+        if rate_change_count > 0:
+            console.print(f"[green]✓[/green] Imported {rate_change_count} rate changes")
         if new_balance is not None:
             console.print(f"[green]✓[/green] Updated current balance: ${new_balance:,.2f}")
         
         # Show skip statistics
-        total_skipped = sum(stats.values())
+        total_skipped = sum(stats.values()) - stats['rate_changes_imported']
         if total_skipped > 0:
             console.print(f"\n[bold]Skipped {total_skipped} non-payment records:[/bold]")
             if stats['skipped_reversals'] > 0:
                 console.print(f"  - Reversals (800): {stats['skipped_reversals']}")
             if stats['skipped_system'] > 0:
                 console.print(f"  - System-generated (668): {stats['skipped_system']}")
-            if stats['skipped_rate_changes'] > 0:
-                console.print(f"  - Rate changes (400/410): {stats['skipped_rate_changes']}")
             if stats['skipped_other_types'] > 0:
                 console.print(f"  - Other non-payment types (310/750): {stats['skipped_other_types']}")
             if stats['skipped_zero_amount'] > 0:
@@ -727,6 +846,37 @@ def mortgage_import(file, property, dry_run):
 # ============================================================================
 # MORTGAGE PROJECT COMMAND
 # ============================================================================
+
+def get_current_rate(entity, mortgage_id):
+    """
+    Get the most recent rate from rate history, or None if no history exists
+    
+    Args:
+        entity: Schema name (mhb or per)
+        mortgage_id: Mortgage ID
+    
+    Returns:
+        Float rate as percentage (e.g., 8.25), or None if no history
+    """
+    if entity not in ALLOWED_ENTITIES:
+        return None
+    
+    query = f"""
+        SELECT interest_rate 
+        FROM {entity}.mortgage_rate_history
+        WHERE mortgage_id = %s
+        ORDER BY effective_date DESC
+        LIMIT 1
+    """
+    
+    try:
+        result = execute_query(query, (mortgage_id,))
+        if result and result[0].get('interest_rate') is not None:
+            return float(result[0]['interest_rate'])
+    except (ValueError, TypeError, KeyError) as e:
+        console.print(f"[yellow]Warning: Could not parse rate from history: {e}[/yellow]")
+    
+    return None
 
 def calculate_monthly_payment(principal, annual_rate, months):
     """
@@ -787,8 +937,8 @@ def mortgage_project(property_code):
     mtg = result[0]
     
     # Edge case: Zero balance
-    if mtg['original_balance'] <= 0:
-        console.print(f"[yellow]⚠ Mortgage {property_code} has zero balance. No projection needed.[/yellow]")
+    if mtg['current_balance'] <= 0:
+        console.print(f"[yellow]⚠ Mortgage {property_code} has zero current balance. No projection needed.[/yellow]")
         return
     
     # Edge case: Maturity date in the past
@@ -797,21 +947,39 @@ def mortgage_project(property_code):
         console.print(f"[yellow]⚠ Mortgage {property_code} maturity date ({mtg['matures_on']}) is in the past.[/yellow]")
         return
     
-    # Calculate monthly payment if not set
-    monthly_payment = mtg['monthly_payment']
-    if not monthly_payment or monthly_payment <= 0:
-        # Calculate months until maturity from issued_on date
-        issued_on = mtg['issued_on']
-        months_until_maturity = (mtg['matures_on'].year - issued_on.year) * 12 + (mtg['matures_on'].month - issued_on.month)
-        if months_until_maturity <= 0:
-            months_until_maturity = 1
-        
-        monthly_payment = calculate_monthly_payment(
-            float(mtg['original_balance']),
-            float(mtg['interest_rate']),
-            months_until_maturity
-        )
-        monthly_payment = Decimal(str(round(monthly_payment, 2)))
+    # Get current rate from history, or use stored rate
+    latest_rate = get_current_rate(entity, mtg['id'])
+    if latest_rate:
+        current_rate = latest_rate
+        rate_source = "from rate history"
+    else:
+        current_rate = float(mtg['interest_rate'])
+        rate_source = "from mortgage record"
+    
+    # Calculate remaining term from today to maturity
+    # Use a more accurate calculation that considers the day of the month
+    # For mortgage projections, we count complete months
+    remaining_months = (mtg['matures_on'].year - today.year) * 12 + (mtg['matures_on'].month - today.month)
+    
+    # If we're past the day of month for the maturity date, subtract one month
+    # This ensures we don't overcount when today is later in the month
+    if today.day > mtg['matures_on'].day:
+        remaining_months -= 1
+    
+    # Ensure we have at least some remaining term
+    if remaining_months <= 0:
+        console.print(f"[yellow]⚠ Mortgage {property_code} has reached or passed maturity date ({mtg['matures_on']}).[/yellow]")
+        return
+    if remaining_months <= 0:
+        console.print(f"[yellow]⚠ Mortgage {property_code} has reached maturity.[/yellow]")
+        return
+    
+    # Get current balance
+    current_balance = float(mtg['current_balance'])
+    
+    # Calculate required monthly payment based on current balance, rate, and remaining term
+    monthly_payment = calculate_monthly_payment(current_balance, current_rate, remaining_months)
+    monthly_payment = Decimal(str(round(monthly_payment, 2)))
     
     # Display header
     console.print(f"\n[bold cyan]Generating amortization schedule for {property_code}...[/bold cyan]")
@@ -821,24 +989,29 @@ def mortgage_project(property_code):
     # Display mortgage details
     console.print("[bold]Mortgage Details:[/bold]")
     console.print(f"  Original Balance: ${mtg['original_balance']:,.2f}")
-    console.print(f"  Interest Rate: {mtg['interest_rate']:.3f}%")
-    console.print(f"  Monthly Payment: ${monthly_payment:,.2f}")
-    console.print(f"  Issued: {mtg['issued_on']}")
+    console.print(f"  Current Balance: ${current_balance:,.2f}")
+    console.print(f"  Current Rate: {current_rate:.3f}% ({rate_source})")
+    console.print(f"  Remaining Term: {remaining_months} months")
+    console.print(f"  Calculated Payment: ${monthly_payment:,.2f}")
     console.print(f"  Maturity Date: {mtg['matures_on']}")
     console.print()
     
     # Delete existing projections
     execute_command(f"DELETE FROM {entity}.mortgage_projection WHERE mortgage_id = %s", (mtg['id'],))
     
-    # Generate amortization schedule
-    monthly_rate = float(mtg['interest_rate']) / 12 / 100
-    remaining_balance = float(mtg['original_balance'])
+    # Generate amortization schedule starting from today
+    monthly_rate = current_rate / 12 / 100
+    remaining_balance = current_balance
     cumulative_interest = 0.0
     payment_number = 1
     
-    # Start from first payment date (month after issued_on)
-    issued_on = mtg['issued_on']
-    payment_date = add_months_to_date(issued_on, 1)
+    # Start from first payment date (first of next month)
+    # Note: We use first of month for consistency in projections
+    # This provides a standardized forward-looking schedule regardless of when
+    # the projection is generated. Actual payment dates may vary.
+    payment_date = add_months_to_date(today, 1)
+    # Adjust to first of month
+    payment_date = payment_date.replace(day=1)
     
     projections = []
     
@@ -851,7 +1024,7 @@ def mortgage_project(property_code):
         
         # Handle case where interest exceeds payment (negative amortization)
         if principal_payment <= 0:
-            console.print(f"[red]Error: Monthly payment ${monthly_payment:,.2f} is too small for interest rate {mtg['interest_rate']:.3f}%[/red]")
+            console.print(f"[red]Error: Monthly payment ${monthly_payment:,.2f} is too small for interest rate {current_rate:.3f}%[/red]")
             console.print(f"[red]At current balance ${remaining_balance:,.2f}, monthly interest is ${interest:,.2f}[/red]")
             return
         
@@ -1041,6 +1214,20 @@ def get_mortgage_details(entity, property_code):
     result = execute_query(query, (property_code,))
     return result[0] if result else None
 
+def get_rate_history(entity, mortgage_id):
+    """Get rate change history for a mortgage"""
+    if entity not in ALLOWED_ENTITIES:
+        return []
+    
+    query = f"""
+        SELECT effective_date, interest_rate
+        FROM {entity}.mortgage_rate_history
+        WHERE mortgage_id = %s
+        ORDER BY effective_date ASC
+    """
+    
+    return execute_query(query, (mortgage_id,))
+
 def get_projection_data(entity, mortgage_id):
     """Get projection data from mortgage_projection table"""
     if entity not in ALLOWED_ENTITIES:
@@ -1113,7 +1300,7 @@ def calculate_variance_stats(projected, actual):
         'balance_variance': act_balance - proj_balance,
     }
 
-def print_summary_report(mortgage, projected, actual, stats):
+def print_summary_report(mortgage, projected, actual, stats, rate_history=None):
     """Print terminal summary report using Rich"""
     property_code = mortgage['property_code']
     full_address = f"{mortgage['address']}, {mortgage['city']}, {mortgage['state']}"
@@ -1128,7 +1315,26 @@ def print_summary_report(mortgage, projected, actual, stats):
     # Mortgage details
     console.print(f"[bold]Property:[/bold] {full_address}")
     console.print(f"[bold]Lender:[/bold] {mortgage['lender']}")
-    console.print(f"[bold]Interest Rate:[/bold] {mortgage['interest_rate']:.3f}%")
+    
+    # Display rate history if available
+    if rate_history and len(rate_history) > 0:
+        console.print(f"\n[bold]Rate History:[/bold]")
+        for i, rh in enumerate(rate_history):
+            rate_str = f"{rh['interest_rate']:.3f}%"
+            date_str = rh['effective_date'].strftime('%Y-%m-%d')
+            
+            # Mark the first entry as origination and last as current
+            if i == 0:
+                console.print(f"  {date_str}: {rate_str} (origination)")
+            elif i == len(rate_history) - 1:
+                console.print(f"  {date_str}: {rate_str} [bold green](current - used for projection)[/bold green]")
+            else:
+                console.print(f"  {date_str}: {rate_str}")
+        console.print(f"\n[bold]Loan Type:[/bold] Variable Rate")
+    else:
+        console.print(f"[bold]Interest Rate:[/bold] {mortgage['interest_rate']:.3f}%")
+        console.print(f"[bold]Loan Type:[/bold] Fixed Rate")
+    
     console.print(f"[bold]Original Balance:[/bold] ${mortgage['original_balance']:,.2f}")
     console.print(f"[bold]Current Balance:[/bold] ${mortgage['current_balance']:,.2f}")
     console.print()
@@ -1355,17 +1561,20 @@ def mortgage_report(property_code):
     # 4. Get actual data from mortgage_payment table
     actual = get_actual_payment_data(entity, mortgage['id'])
     
+    # 5. Get rate history
+    rate_history = get_rate_history(entity, mortgage['id'])
+    
     # Handle missing projection data
     if not projected:
         console.print(f"[yellow]⚠ No projection data found for {property_code}.[/yellow]")
         console.print(f"[yellow]Run 'copilot mortgage project {property_code}' first to generate amortization schedule.[/yellow]")
         return
     
-    # 5. Calculate statistics
+    # 6. Calculate statistics
     stats = calculate_variance_stats(projected, actual) if actual else None
     
-    # 6. Print terminal summary report
-    print_summary_report(mortgage, projected, actual, stats)
+    # 7. Print terminal summary report
+    print_summary_report(mortgage, projected, actual, stats, rate_history)
     
-    # 7. Generate and display matplotlib charts
+    # 8. Generate and display matplotlib charts
     display_charts(mortgage, projected, actual)
