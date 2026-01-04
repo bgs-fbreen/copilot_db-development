@@ -19,6 +19,24 @@ from datetime import datetime
 
 console = Console()
 
+# Configuration constants
+PLACEHOLDER_API_KEY = 'your-api-key-here'
+DEFAULT_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4')
+DEFAULT_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.7'))
+DEFAULT_MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', '1500'))
+
+# ============================================================================
+# HELPER FUNCTIONS - UTILITIES
+# ============================================================================
+
+def decimal_to_float(value):
+    """Convert Decimal to float for JSON serialization, handling None"""
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
 # ============================================================================
 # HELPER FUNCTIONS - DATABASE CONTEXT GATHERING
 # ============================================================================
@@ -45,7 +63,7 @@ def get_financial_context():
     
     tax_results = execute_query(tax_query)
     for row in tax_results:
-        context['tax_outstanding'][row['property_code']] = float(row['total_balance'])
+        context['tax_outstanding'][row['property_code']] = decimal_to_float(row['total_balance'])
         context['total_outstanding'] += row['total_balance']
     
     # Get foreclosure risk bills (3+ years delinquent)
@@ -72,17 +90,17 @@ def get_financial_context():
         context['foreclosure_risk'][prop]['bills'].append({
             'year': row['tax_year'],
             'season': row['tax_season'],
-            'amount': float(row['balance_due']),
+            'amount': decimal_to_float(row['balance_due']),
             'years_delinquent': int(row['years_delinquent'])
         })
         context['foreclosure_risk'][prop]['total'] += row['balance_due']
         context['total_at_risk'] += row['balance_due']
     
-    # Convert Decimal to float for JSON serialization
-    context['total_outstanding'] = float(context['total_outstanding'])
-    context['total_at_risk'] = float(context['total_at_risk'])
+    # Convert remaining Decimals to float for JSON serialization
+    context['total_outstanding'] = decimal_to_float(context['total_outstanding'])
+    context['total_at_risk'] = decimal_to_float(context['total_at_risk'])
     for prop in context['foreclosure_risk']:
-        context['foreclosure_risk'][prop]['total'] = float(context['foreclosure_risk'][prop]['total'])
+        context['foreclosure_risk'][prop]['total'] = decimal_to_float(context['foreclosure_risk'][prop]['total'])
     
     return context
 
@@ -118,12 +136,12 @@ def get_tax_context():
             'property': row['property_code'],
             'year': row['tax_year'],
             'season': row['tax_season'],
-            'total_due': float(row['total_due']),
-            'paid': float(row['total_paid']) if row['total_paid'] else 0.0,
-            'balance': float(row['balance_due']),
+            'total_due': decimal_to_float(row['total_due']),
+            'paid': decimal_to_float(row['total_paid']) if row['total_paid'] else 0.0,
+            'balance': decimal_to_float(row['balance_due']),
             'due_date': row['due_date'].strftime('%Y-%m-%d') if row['due_date'] else None,
-            'assessed_value': float(row['assessed_value']) if row['assessed_value'] else None,
-            'pre_pct': float(row['pre_pct']) if row['pre_pct'] else 0.0
+            'assessed_value': decimal_to_float(row['assessed_value']) if row['assessed_value'] else None,
+            'pre_pct': decimal_to_float(row['pre_pct']) if row['pre_pct'] else 0.0
         })
     
     # Get foreclosure risk bills
@@ -145,7 +163,7 @@ def get_tax_context():
             'property': row['property_code'],
             'year': row['tax_year'],
             'season': row['tax_season'],
-            'balance': float(row['balance_due']),
+            'balance': decimal_to_float(row['balance_due']),
             'years_delinquent': int(row['years_delinquent']),
             'risk': row['risk_level']
         })
@@ -173,7 +191,7 @@ def get_tax_context():
             'year': row['tax_year'],
             'season': row['tax_season'],
             'date': row['payment_date'].strftime('%Y-%m-%d'),
-            'amount': float(row['amount']),
+            'amount': decimal_to_float(row['amount']),
             'method': row['payment_method']
         })
     
@@ -196,11 +214,11 @@ def get_openai_client():
     try:
         from openai import OpenAI
     except ImportError:
-        console.print("[red]Error: OpenAI library not installed. Install with: pip install openai[/red]")
+        console.print("[red]Error: OpenAI library not installed. Install with: pip install 'openai>=1.0.0'[/red]")
         return None
     
     api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key or api_key == 'your-api-key-here':
+    if not api_key or api_key == PLACEHOLDER_API_KEY:
         console.print("[red]Error: OPENAI_API_KEY not set in environment[/red]")
         console.print("[yellow]Set your API key in .env file or environment variable[/yellow]")
         console.print("[dim]Get your API key from: https://platform.openai.com/api-keys[/dim]")
@@ -226,8 +244,11 @@ Critical rules:
     
     return base_prompt
 
-def query_openai(client, prompt, context_data, model="gpt-4"):
+def query_openai(client, prompt, context_data, model=None):
     """Query OpenAI with context and return response"""
+    if model is None:
+        model = DEFAULT_MODEL
+    
     try:
         # Build context summary
         context_summary = f"""
@@ -257,14 +278,29 @@ Tax Outstanding by Property:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.7,
-            max_tokens=1500
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS
         )
         
         return response.choices[0].message.content
     
+    except ImportError:
+        console.print("[red]Error: OpenAI library not available[/red]")
+        return None
     except Exception as e:
-        console.print(f"[red]Error querying OpenAI: {str(e)}[/red]")
+        # Try to provide more specific error messages for common OpenAI errors
+        error_msg = str(e).lower()
+        if 'rate limit' in error_msg or 'quota' in error_msg:
+            console.print("[red]Error: OpenAI rate limit exceeded or quota reached[/red]")
+            console.print("[yellow]Please wait a few minutes or upgrade your OpenAI plan[/yellow]")
+        elif 'authentication' in error_msg or 'api key' in error_msg:
+            console.print("[red]Error: OpenAI API key authentication failed[/red]")
+            console.print("[yellow]Check that your API key is valid and hasn't expired[/yellow]")
+        elif 'timeout' in error_msg:
+            console.print("[red]Error: OpenAI request timed out[/red]")
+            console.print("[yellow]Check your internet connection and try again[/yellow]")
+        else:
+            console.print(f"[red]Error querying OpenAI: {str(e)}[/red]")
         return None
 
 # ============================================================================
