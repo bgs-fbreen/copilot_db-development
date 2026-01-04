@@ -4,7 +4,7 @@ from rich.console import Console
 from copilot.commands import (version, timesheet, new, edit, ar, invoice, client, 
                                 project, report, baseline, import_cmd, allocate,
                                 staging_cmd, trial_cmd, journal_cmd, gl_cmd, lease, 
-                                mortgage, property, tax, help_cmd)
+                                mortgage, property, tax, help_cmd, advisor)
 
 console = Console()
 
@@ -43,6 +43,7 @@ cli.add_command(mortgage)
 cli.add_command(property)
 cli.add_command(tax)
 cli.add_command(help_cmd)
+cli.add_command(advisor)
 
 if __name__ == '__main__':
     cli()
