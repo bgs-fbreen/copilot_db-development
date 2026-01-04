@@ -286,7 +286,7 @@ Enter property code (905brown, 711pine, 819helen, parnell): 905brown
 Enter tax year: 2022
 Enter season (Summer/Winter): Summer
 Enter payment amount: 981.19
-Enter payment date (YYYY-MM-DD) [2026-01-15]: 2026-01-15
+Enter payment date (YYYY-MM-DD) [today]: [Enter current date]
 Enter payment method [check/online/wire/cash]: check
 Enter check number (optional): 1234
 Enter notes (optional): Paid in full - highest priority
@@ -357,7 +357,7 @@ Export tax data to CSV or JSON format for analysis in Excel, Google Sheets, or o
 
 **Sample Output:**
 ```
-✓ Data exported to tax_export_owed_20260115_143022.csv
+✓ Data exported to tax_export_owed_YYYYMMDD_HHMMSS.csv
 ```
 
 ### Generate Annual Report
